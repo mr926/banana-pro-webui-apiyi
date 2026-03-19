@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Banana Pro 历史相册</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="album-shell">
+      <header class="album-topbar">
+        <div>
+          <div class="eyebrow">Album</div>
+          <h1>历史相册</h1>
+          <p>查看、下载和删除已经生成的图片。</p>
+        </div>
+        <div class="brand-actions">
+          <a href="/" class="ghost-button">返回工作台</a>
+          <button type="button" id="album-logout-button" class="ghost-button hidden">退出</button>
+        </div>
+      </header>
+
+      <main>
+        <div id="album-grid" class="album-grid"></div>
+      </main>
+    </div>
+
+    <div id="album-auth-overlay" class="auth-overlay hidden" aria-hidden="true">
+      <form id="album-login-form" class="auth-card">
+        <div class="eyebrow">Protected</div>
+        <h2>请输入访问密码</h2>
+        <p>登录后可查看历史相册。</p>
+        <input id="album-password-input" class="auth-input" type="password" placeholder="请输入密码" autocomplete="current-password" />
+        <button type="submit" class="primary-button">进入相册</button>
+        <p id="album-auth-status" class="form-status"></p>
+      </form>
+    </div>
+
+    <template id="album-item-template">
+      <article class="album-card">
+        <img class="album-image" alt="历史相册图片" />
+        <div class="album-info">
+          <div class="album-meta">
+            <strong class="album-time"></strong>
+            <span class="album-tags"></span>
+          </div>
+          <p class="album-prompt"></p>
+          <div class="album-actions">
+            <a class="ghost-button album-open" target="_blank" rel="noreferrer">查看原图</a>
+            <a class="ghost-button album-download" download>下载</a>
+            <button type="button" class="danger-button album-delete">删除</button>
+          </div>
+        </div>
+      </article>
+    </template>
+
+    <script src="/history.js" defer></script>
+  </body>
+  </html>

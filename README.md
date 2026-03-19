@@ -1,0 +1,93 @@
+# Banana Pro 图生图 Web UI
+
+一个无需额外依赖的本地 Web UI，支持：
+
+- 基础图必传
+- 最多 6 张参考图
+- 图片比例可选，默认自动继承基础图比例
+- 生成大小支持 `1K / 2K / 4K`
+- 可选开启网络搜索增强
+- 提示词输入
+- 结果图直接下载
+- 本地保留历史图片和历史记录
+
+## 本地启动
+
+```bash
+python3 server.py
+```
+
+启动后访问：
+
+[http://127.0.0.1:8787](http://127.0.0.1:8787)
+
+## 环境变量
+
+默认从项目根目录 `.env` 读取：
+
+- `BANANA_PRO_API_URL`
+- `BANANA_PRO_API_KEY`
+- `BANANA_PRO_UI_PASSWORD`
+- `BANANA_PRO_HOST`
+- `BANANA_PRO_PORT`
+
+也可以直接通过环境变量传入，环境变量优先级高于 `.env`。
+
+如果设置了 `BANANA_PRO_UI_PASSWORD`，页面会先要求输入访问密码；不设置则保持无密码访问。
+
+## Docker 启动
+
+先准备环境变量，推荐直接在命令行传入，避免把 key 写进镜像里：
+
+```bash
+export BANANA_PRO_API_KEY="你的_api_key"
+export BANANA_PRO_API_URL="https://api.apiyi.com/v1beta/models/gemini-3-pro-image-preview:generateContent"
+export BANANA_PRO_UI_PASSWORD="你的访问密码"
+docker compose up -d --build
+```
+
+也可以直接复制一份 Docker 专用环境文件：
+
+```bash
+cp .env.docker.example .env.docker
+```
+
+然后把 `.env.docker` 里的 `BANANA_PRO_API_KEY` 改成你自己的，再启动：
+
+```bash
+docker compose --env-file .env.docker up -d --build
+```
+
+启动后访问：
+
+[http://127.0.0.1:8787](http://127.0.0.1:8787)
+
+停止：
+
+```bash
+docker compose down
+```
+
+如果你更喜欢单独 `docker build` / `docker run`，也可以：
+
+```bash
+docker build -t banana-pro-ui .
+docker run -d \
+  --name banana-pro-ui \
+  -p 8787:8787 \
+  -e BANANA_PRO_API_KEY="你的_api_key" \
+  -e BANANA_PRO_API_URL="https://api.apiyi.com/v1beta/models/gemini-3-pro-image-preview:generateContent" \
+  -e BANANA_PRO_UI_PASSWORD="你的访问密码" \
+  -v "$(pwd)/data:/app/data" \
+  banana-pro-ui
+```
+
+## 目录说明
+
+- `server.py`: 本地服务和 API 代理
+- `public/`: 前端页面
+- `data/generated/`: 生成后的图片文件
+- `data/history.json`: 历史记录
+- `Dockerfile`: Docker 镜像构建文件
+- `docker-compose.yml`: Docker Compose 启动配置
+- `.env.docker.example`: Docker 环境变量示例
