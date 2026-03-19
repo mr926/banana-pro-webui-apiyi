@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Banana Pro 图生图工作台</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <aside class="control-panel">
+        <div class="brand-card">
+          <div class="brand-topbar">
+            <div>
+              <div class="eyebrow">Banana Pro</div>
+              <h1>图生图工作台</h1>
+            </div>
+            <div class="brand-actions">
+              <a href="/history.html" class="ghost-button">历史相册</a>
+              <button type="button" id="logout-button" class="ghost-button hidden">退出</button>
+            </div>
+          </div>
+          <p>上传基础图和参考图，选择比例、清晰度与搜索增强后直接生成。</p>
+        </div>
+
+        <form id="generate-form" class="panel-stack">
+          <section class="panel-card">
+            <div class="section-head">
+              <h2>基础结构图（必填）</h2>
+              <p>上传一张主要约束图，默认会自动继承它的宽高比。</p>
+            </div>
+            <label class="upload-box" for="base-image">
+              <input id="base-image" name="baseImage" type="file" accept="image/*" required />
+              <span class="upload-icon">+</span>
+              <strong>点击上传基础图</strong>
+              <span>支持 PNG、JPG、WEBP、GIF</span>
+            </label>
+            <div id="base-preview" class="thumb-grid single"></div>
+          </section>
+
+          <section class="panel-card">
+            <div class="section-head">
+              <h2>风格参考图（可选）</h2>
+              <p>最多 6 张，用于借鉴材质、灯光、色彩和氛围。</p>
+            </div>
+            <label class="upload-box compact" for="reference-images">
+              <input id="reference-images" name="referenceImages" type="file" accept="image/*" multiple />
+              <span class="upload-icon">+</span>
+              <strong>上传参考图</strong>
+              <span>最多 6 张</span>
+            </label>
+            <div id="reference-preview" class="thumb-grid"></div>
+          </section>
+
+          <section class="panel-card">
+            <div class="setting-group">
+              <div class="section-head narrow">
+                <h2>图片比例</h2>
+                <p>默认使用基础图比例，也可以手动覆盖。</p>
+              </div>
+              <div class="chip-grid" id="aspect-ratio-group">
+                <label class="chip">
+                  <input type="radio" name="aspectRatio" value="auto" checked />
+                  <span>自动</span>
+                </label>
+                <label class="chip">
+                  <input type="radio" name="aspectRatio" value="1:1" />
+                  <span>1:1</span>
+                </label>
+                <label class="chip">
+                  <input type="radio" name="aspectRatio" value="4:3" />
+                  <span>4:3</span>
+                </label>
+                <label class="chip">
+                  <input type="radio" name="aspectRatio" value="3:4" />
+                  <span>3:4</span>
+                </label>
+                <label class="chip">
+                  <input type="radio" name="aspectRatio" value="16:9" />
+                  <span>16:9</span>
+                </label>
+                <label class="chip">
+                  <input type="radio" name="aspectRatio" value="9:16" />
+                  <span>9:16</span>
+                </label>
+                <label class="chip">
+                  <input type="radio" name="aspectRatio" value="5:4" />
+                  <span>5:4</span>
+                </label>
+                <label class="chip">
+                  <input type="radio" name="aspectRatio" value="4:5" />
+                  <span>4:5</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="setting-group">
+              <div class="section-head narrow">
+                <h2>生成大小</h2>
+                <p>可选 1K / 2K / 4K。</p>
+              </div>
+              <div class="segment-grid">
+                <label class="segment">
+                  <input type="radio" name="imageSize" value="1K" />
+                  <span>1K</span>
+                </label>
+                <label class="segment">
+                  <input type="radio" name="imageSize" value="2K" checked />
+                  <span>2K</span>
+                </label>
+                <label class="segment">
+                  <input type="radio" name="imageSize" value="4K" />
+                  <span>4K</span>
+                </label>
+              </div>
+            </div>
+
+            <label class="toggle-row">
+              <div>
+                <strong>网络搜索增强</strong>
+                <p>需要时启用搜索能力，补充最新公开信息作为参考。</p>
+              </div>
+              <span class="switch">
+                <input type="checkbox" name="enableSearch" value="true" />
+                <span class="slider"></span>
+              </span>
+            </label>
+
+            <div class="setting-group">
+              <div class="section-head narrow">
+                <h2>提示词</h2>
+                <p>描述你想要的风格、材质、光线、镜头语言和细节。</p>
+              </div>
+              <div class="prompt-toolbar">
+                <select id="prompt-library-select" class="prompt-select">
+                  <option value="">从提示词列表中选择并插入</option>
+                </select>
+                <label class="ghost-button prompt-import">
+                  <input id="prompt-library-file" type="file" accept=".txt,text/plain" />
+                  导入 txt 词库
+                </label>
+              </div>
+              <textarea
+                id="prompt"
+                name="prompt"
+                rows="4"
+                placeholder="例如：保留建筑结构关系，生成清晨自然光的现代建筑外立面效果图，浅灰石材与木饰面结合，氛围干净、克制、真实。"
+              ></textarea>
+            </div>
+
+            <button type="submit" id="submit-button" class="primary-button">生成渲染图</button>
+            <p id="form-status" class="form-status"></p>
+          </section>
+        </form>
+      </aside>
+
+      <main class="result-panel">
+        <section class="preview-card">
+          <div class="preview-head">
+            <div>
+              <div class="eyebrow">Preview</div>
+              <h2>当前结果</h2>
+            </div>
+            <div id="result-meta" class="result-meta"></div>
+          </div>
+
+          <div id="result-stage" class="result-stage empty">
+            <div class="placeholder">
+              <div class="placeholder-icon">▣</div>
+              <h3>准备生成</h3>
+              <p>上传基础图并填写提示词后，就可以开始渲染。</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="history-card">
+          <div class="preview-head">
+            <div>
+              <div class="eyebrow">History</div>
+              <h2>历史图片</h2>
+            </div>
+            <button type="button" id="refresh-history" class="ghost-button">刷新</button>
+          </div>
+          <div id="history-list" class="history-list"></div>
+        </section>
+      </main>
+    </div>
+
+    <div id="auth-overlay" class="auth-overlay hidden" aria-hidden="true">
+      <form id="login-form" class="auth-card">
+        <div class="eyebrow">Protected</div>
+        <h2>请输入访问密码</h2>
+        <p>密码来自服务端环境变量配置，验证通过后才会显示历史记录和生成接口。</p>
+        <input id="password-input" class="auth-input" type="password" placeholder="请输入密码" autocomplete="current-password" />
+        <button type="submit" class="primary-button">进入工作台</button>
+        <p id="auth-status" class="form-status"></p>
+      </form>
+    </div>
+
+    <template id="progress-template">
+      <div class="progress-shell">
+        <div class="progress-track">
+          <div class="progress-fill"></div>
+        </div>
+        <div class="progress-meta">
+          <strong class="progress-label"></strong>
+          <span class="progress-value"></span>
+        </div>
+      </div>
+    </template>
+
+    <template id="history-item-template">
+      <article class="history-item">
+        <img class="history-image" alt="历史图片" />
+        <div class="history-info">
+          <div class="history-topline">
+            <strong class="history-time"></strong>
+            <span class="history-tags"></span>
+          </div>
+          <p class="history-prompt"></p>
+          <div class="history-actions">
+            <button type="button" class="history-view ghost-button">查看</button>
+            <a class="history-download ghost-button" download>下载</a>
+            <button type="button" class="history-delete danger-button">删除</button>
+          </div>
+        </div>
+      </article>
+    </template>
+
+    <script src="/app.js" defer></script>
+  </body>
+  </html>
