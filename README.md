@@ -82,6 +82,19 @@ docker run -d \
   banana-pro-ui
 ```
 
+## GitHub 自动推送到 Docker Hub
+
+项目已包含 GitHub Actions 工作流文件：[.github/workflows/docker.yml](/Users/chao/Desktop/banana/.github/workflows/docker.yml)。
+
+当代码推送到 `main` 分支时，GitHub 会自动构建镜像并推送到 Docker Hub 仓库 `mr926/banana-pro-webui-apiyi`。
+
+使用前需要先在 GitHub 仓库的 `Settings -> Secrets and variables -> Actions` 中添加：
+
+- `DOCKERHUB_USERNAME`: 你的 Docker Hub 用户名
+- `DOCKERHUB_TOKEN`: 你的 Docker Hub Access Token
+
+添加完成后，只要向 `main` 推送代码，或在 GitHub Actions 页面手动触发该工作流，就会自动发布镜像。
+
 ## 目录说明
 
 - `server.py`: 本地服务和 API 代理
@@ -91,3 +104,4 @@ docker run -d \
 - `Dockerfile`: Docker 镜像构建文件
 - `docker-compose.yml`: Docker Compose 启动配置
 - `.env.docker.example`: Docker 环境变量示例
+- `.github/workflows/docker.yml`: 自动构建并推送 Docker Hub 的 GitHub Actions 工作流
