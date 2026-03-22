@@ -29,14 +29,33 @@ python3 server.py
 默认从项目根目录 `.env` 读取：
 
 - `BANANA_PRO_API_URL`
-- `BANANA_PRO_API_KEY`
 - `BANANA_PRO_UI_PASSWORD`
+- `BANANA_PRO_API_KEY`
+- `BANANA_PRO_LLM_API_KEY`
 - `BANANA_PRO_HOST`
 - `BANANA_PRO_PORT`
 
 也可以直接通过环境变量传入，环境变量优先级高于 `.env`。
 
 如果设置了 `BANANA_PRO_UI_PASSWORD`，页面会先要求输入访问密码；不设置则保持无密码访问。
+如果设置了 `BANANA_PRO_LLM_API_KEY`，AI 翻译优化会优先使用它；未设置时会回退到 `BANANA_PRO_API_KEY`。
+
+推荐先复制示例文件：
+
+```bash
+cp .env.example .env
+```
+
+默认示例内容如下：
+
+```env
+BANANA_PRO_API_URL=https://api.apiyi.com/v1beta/models/gemini-3-pro-image-preview:generateContent
+BANANA_PRO_UI_PASSWORD=
+BANANA_PRO_API_KEY=
+BANANA_PRO_LLM_API_KEY=
+BANANA_PRO_HOST=127.0.0.1
+BANANA_PRO_PORT=8787
+```
 
 ## 提示词与人格管理
 
@@ -76,9 +95,12 @@ python3 server.py
 先准备环境变量，推荐直接在命令行传入，避免把 key 写进镜像里：
 
 ```bash
+export BANANA_PRO_LLM_API_KEY="你的_llm_api_key"
 export BANANA_PRO_API_KEY="你的_api_key"
 export BANANA_PRO_API_URL="https://api.apiyi.com/v1beta/models/gemini-3-pro-image-preview:generateContent"
-export BANANA_PRO_UI_PASSWORD="你的访问密码"
+export BANANA_PRO_UI_PASSWORD=""
+export BANANA_PRO_HOST="0.0.0.0"
+export BANANA_PRO_PORT="8787"
 docker compose up -d --build
 ```
 
@@ -88,7 +110,7 @@ docker compose up -d --build
 cp .env.docker.example .env.docker
 ```
 
-然后把 `.env.docker` 里的 `BANANA_PRO_API_KEY` 改成你自己的，再启动：
+然后把 `.env.docker` 里的 `BANANA_PRO_API_KEY` 和 `BANANA_PRO_LLM_API_KEY` 改成你自己的；如果不需要访问密码，可以保持 `BANANA_PRO_UI_PASSWORD=` 为空。再启动：
 
 ```bash
 docker compose --env-file .env.docker up -d --build
@@ -112,8 +134,11 @@ docker run -d \
   --name banana-pro-ui \
   -p 8787:8787 \
   -e BANANA_PRO_API_KEY="你的_api_key" \
+  -e BANANA_PRO_LLM_API_KEY="你的_llm_api_key" \
   -e BANANA_PRO_API_URL="https://api.apiyi.com/v1beta/models/gemini-3-pro-image-preview:generateContent" \
-  -e BANANA_PRO_UI_PASSWORD="你的访问密码" \
+  -e BANANA_PRO_UI_PASSWORD="" \
+  -e BANANA_PRO_HOST="0.0.0.0" \
+  -e BANANA_PRO_PORT="8787" \
   -v "$(pwd)/data:/app/data" \
   banana-pro-ui
 ```
@@ -141,5 +166,6 @@ docker run -d \
 - `data/personas/`: 提示词优化人格 `.md` 文件目录
 - `Dockerfile`: Docker 镜像构建文件
 - `docker-compose.yml`: Docker Compose 启动配置
+- `.env.example`: 本地环境变量示例
 - `.env.docker.example`: Docker 环境变量示例
 - `.github/workflows/docker.yml`: 自动构建并推送 Docker Hub 的 GitHub Actions 工作流
