@@ -29,10 +29,10 @@
               <h2>基础结构图（必填）</h2>
               <p>上传一张主要约束图，默认会自动继承它的宽高比。</p>
             </div>
-            <label class="upload-box" for="base-image">
+            <label class="upload-box compact slim" for="base-image">
               <input id="base-image" name="baseImage" type="file" accept="image/*" required />
               <span class="upload-icon">+</span>
-              <strong>点击上传基础图</strong>
+              <strong>上传基础图</strong>
               <span>支持 PNG、JPG、WEBP、GIF</span>
             </label>
             <div id="base-preview" class="thumb-grid single"></div>
@@ -43,7 +43,7 @@
               <h2>风格参考图（可选）</h2>
               <p>最多 6 张，用于借鉴材质、灯光、色彩和氛围。</p>
             </div>
-            <label class="upload-box compact" for="reference-images">
+            <label class="upload-box compact slim" for="reference-images">
               <input id="reference-images" name="referenceImages" type="file" accept="image/*" multiple />
               <span class="upload-icon">+</span>
               <strong>上传参考图</strong>
@@ -54,42 +54,52 @@
 
           <section class="panel-card">
             <div class="setting-group">
-              <div class="section-head narrow">
-                <h2>图片比例</h2>
-                <p>默认使用基础图比例，也可以手动覆盖。</p>
+              <div class="section-head narrow section-head-with-preview">
+                <div>
+                  <h2>图片比例</h2>
+                  <p>默认使用基础图比例，也可以手动覆盖。</p>
+                </div>
+                <div class="ratio-orientation-preview" id="ratio-orientation-preview">
+                  <div class="orientation-card" data-orientation="landscape">
+                    <span class="orientation-shape orientation-shape-landscape"></span>
+                  </div>
+                  <div class="orientation-card" data-orientation="portrait">
+                    <span class="orientation-shape orientation-shape-portrait"></span>
+                  </div>
+                </div>
               </div>
               <div class="chip-grid" id="aspect-ratio-group">
                 <label class="chip">
                   <input type="radio" name="aspectRatio" value="auto" checked />
-                  <span>自动</span>
+                  <span><strong>自动</strong></span>
                 </label>
                 <label class="chip">
                   <input type="radio" name="aspectRatio" value="1:1" />
-                  <span>1:1</span>
+                  <span><strong>1:1</strong></span>
                 </label>
                 <label class="chip">
                   <input type="radio" name="aspectRatio" value="4:3" />
-                  <span>4:3</span>
+                  <span><strong>4:3</strong></span>
                 </label>
                 <label class="chip">
                   <input type="radio" name="aspectRatio" value="3:4" />
-                  <span>3:4</span>
+                  <span><strong>3:4</strong></span>
                 </label>
                 <label class="chip">
                   <input type="radio" name="aspectRatio" value="16:9" />
-                  <span>16:9</span>
+                  <span><strong>16:9</strong></span>
                 </label>
                 <label class="chip">
                   <input type="radio" name="aspectRatio" value="9:16" />
-                  <span>9:16</span>
+                  <span><strong>9:16</strong></span>
                 </label>
                 <label class="chip">
                   <input type="radio" name="aspectRatio" value="5:4" />
-                  <span>5:4</span>
+                  <span><strong>5:4</strong></span>
                 </label>
                 <label class="chip">
                   <input type="radio" name="aspectRatio" value="4:5" />
-                  <span>4:5</span>
+                  <span><strong>4:5</strong></span>
                 </label>
               </div>
             </div>
@@ -105,11 +115,11 @@
                   <span>1K</span>
                 </label>
                 <label class="segment">
-                  <input type="radio" name="imageSize" value="2K" checked />
+                  <input type="radio" name="imageSize" value="2K" />
                   <span>2K</span>
                 </label>
                 <label class="segment">
-                  <input type="radio" name="imageSize" value="4K" />
+                  <input type="radio" name="imageSize" value="4K" checked />
                   <span>4K</span>
                 </label>
               </div>
@@ -131,6 +141,16 @@
                 <h2>提示词</h2>
                 <p>描述你想要的风格、材质、光线、镜头语言和细节。</p>
               </div>
+              <div class="segment-grid prompt-mode-grid">
+                <label class="segment">
+                  <input type="radio" name="promptMode" value="default" checked />
+                  <span>默认</span>
+                </label>
+                <label class="segment">
+                  <input type="radio" name="promptMode" value="optimized" />
+                  <span>AI 翻译优化</span>
+                </label>
+              </div>
               <div class="prompt-toolbar">
                 <select id="prompt-library-select" class="prompt-select">
                   <option value="">从提示词列表中选择并插入</option>
@@ -146,6 +166,23 @@
                 rows="4"
                 placeholder="例如：保留建筑结构关系，生成清晨自然光的现代建筑外立面效果图，浅灰石材与木饰面结合，氛围干净、克制、真实。"
               ></textarea>
+              <div id="optimized-prompt-panel" class="optimized-prompt-panel hidden">
+                <div class="persona-toolbar">
+                  <select id="prompt-persona-select" class="prompt-select">
+                    <option value="">选择转译人设</option>
+                  </select>
+                  <p id="prompt-persona-summary" class="persona-summary"></p>
+                </div>
+                <button type="button" id="optimize-prompt-button" class="primary-button optimize-button">提示词优化</button>
+                <div id="optimize-progress" class="inline-progress hidden"></div>
+                <textarea
+                  id="optimized-prompt"
+                  rows="5"
+                  placeholder="这里会显示 AI 翻译优化后的英文提示词，生成时会发送这里的内容。"
+                  readonly
+                ></textarea>
+                <p id="optimize-status" class="form-status inline-status"></p>
+              </div>
             </div>
 
             <button type="submit" id="submit-button" class="primary-button">生成渲染图</button>

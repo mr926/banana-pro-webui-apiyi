@@ -19,11 +19,23 @@ const logoutButton = document.getElementById("logout-button");
 const promptLibrarySelect = document.getElementById("prompt-library-select");
 const promptLibraryFile = document.getElementById("prompt-library-file");
 const promptTextarea = document.getElementById("prompt");
+const optimizePromptButton = document.getElementById("optimize-prompt-button");
+const optimizedPromptPanel = document.getElementById("optimized-prompt-panel");
+const optimizedPromptTextarea = document.getElementById("optimized-prompt");
+const optimizeProgress = document.getElementById("optimize-progress");
+const optimizeStatus = document.getElementById("optimize-status");
+const promptPersonaSelect = document.getElementById("prompt-persona-select");
+const promptPersonaSummary = document.getElementById("prompt-persona-summary");
+const aspectRatioGroup = document.getElementById("aspect-ratio-group");
+const ratioOrientationPreview = document.getElementById("ratio-orientation-preview");
 
 const state = {
   currentResult: null,
   progressTimer: null,
+  optimizeProgressTimer: null,
   progressValue: 0,
+  optimizeProgressValue: 0,
+  notificationPermissionPromise: null,
   historyHydrated: false,
   audioContext: null,
   authenticated: false,
@@ -31,6 +43,10 @@ const state = {
   baseImageFile: null,
   referenceFiles: [],
   promptLibrary: [],
+  promptPersonas: [],
+  selectedPromptPersonaId: "",
+  optimizedPrompt: "",
+  optimizingPrompt: false,
 };
 
 const PROMPT_LIBRARY_STORAGE_KEY = "banana_prompt_library";
@@ -44,6 +60,19 @@ const progressSteps = [
   { value: 94, label: "正在整理结果" },
 ];
 
+const optimizeProgressSteps = [
+  { value: 16, label: "正在发送提示词" },
+  { value: 44, label: "GPT-5.4 正在翻译优化" },
+  { value: 72, label: "正在整理英文提示词" },
+  { value: 92, label: "即将完成" },
+];
+
+const MB = 1024 * 1024;
+const BASE_IMAGE_MAX_BYTES = 4 * MB;
+const BASE_IMAGE_MAX_LONG_EDGE = 4000;
+const BASE_IMAGE_QUALITY = 0.85;
+const REFERENCE_IMAGE_MAX_BYTES = 2 * MB;
+
 function revokePreviewUrls(container) {
   container.querySelectorAll("[data-object-url]").forEach((img) => {
     URL.revokeObjectURL(img.dataset.objectUrl);
@@ -54,6 +83,132 @@ function syncNativeInputFiles(input, files) {
   const dt = new DataTransfer();
   files.forEach((file) => dt.items.add(file));
   input.files = dt.files;
+}
+
+function formatFileSize(bytes) {
+  if (bytes >= MB) {
+    return `${(bytes / MB).toFixed(2)} MB`;
+  }
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function renameFileToJpg(name) {
+  const stem = name.replace(/\.[^.]+$/, "") || "image";
+  return `${stem}.jpg`;
+}
+
+function getScaledDimensions(width, height, maxLongEdge) {
+  const longEdge = Math.max(width, height);
+  if (!maxLongEdge || longEdge <= maxLongEdge) {
+    return { width, height };
+  }
+
+  const scale = maxLongEdge / longEdge;
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+}
+
+function readImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error(`无法读取图片：${file.name}`));
+    };
+
+    image.src = url;
+  });
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error("图片压缩失败。"));
+          return;
+        }
+        resolve(blob);
+      },
+      type,
+      quality,
+    );
+  });
+}
+
+async function renderCompressedFile(file, options) {
+  const {
+    maxLongEdge = null,
+    widthScale = 1,
+    quality = 0.85,
+    type = "image/jpeg",
+    fileName = renameFileToJpg(file.name),
+  } = options;
+  const image = await readImageFile(file);
+  const limited = getScaledDimensions(image.naturalWidth, image.naturalHeight, maxLongEdge);
+  const targetWidth = Math.max(1, Math.round(limited.width * widthScale));
+  const targetHeight = Math.max(1, Math.round(limited.height * widthScale));
+  const canvas = document.createElement("canvas");
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("浏览器不支持图片压缩。");
+  }
+
+  context.drawImage(image, 0, 0, targetWidth, targetHeight);
+  const blob = await canvasToBlob(canvas, type, quality);
+  return new File([blob], fileName, {
+    type,
+    lastModified: Date.now(),
+  });
+}
+
+async function compressBaseImageIfNeeded(file) {
+  if (file.size <= BASE_IMAGE_MAX_BYTES) {
+    return { file, compressed: false };
+  }
+
+  const compressedFile = await renderCompressedFile(file, {
+    maxLongEdge: BASE_IMAGE_MAX_LONG_EDGE,
+    quality: BASE_IMAGE_QUALITY,
+    type: "image/jpeg",
+  });
+  return { file: compressedFile, compressed: true };
+}
+
+async function compressReferenceImageIfNeeded(file) {
+  if (file.size <= REFERENCE_IMAGE_MAX_BYTES) {
+    return { file, compressed: false };
+  }
+
+  const qualitySteps = [0.85, 0.78, 0.72, 0.66, 0.6, 0.54, 0.48, 0.42];
+  const scaleSteps = [1, 0.92, 0.84, 0.76, 0.68, 0.6];
+
+  for (const scale of scaleSteps) {
+    for (const quality of qualitySteps) {
+      const compressedFile = await renderCompressedFile(file, {
+        maxLongEdge: BASE_IMAGE_MAX_LONG_EDGE,
+        widthScale: scale,
+        quality,
+        type: "image/jpeg",
+      });
+      if (compressedFile.size <= REFERENCE_IMAGE_MAX_BYTES) {
+        return { file: compressedFile, compressed: true };
+      }
+    }
+  }
+
+  throw new Error(`参考图 ${file.name} 压缩后仍超过 2MB，请换一张图片再试。`);
 }
 
 function renderFiles(container, files, typeLabel, options = {}) {
@@ -124,6 +279,12 @@ function setStatus(message, isError = false) {
   formStatus.style.color = isError ? "#d14343" : "";
 }
 
+function setOptimizeStatus(message, isError = false) {
+  if (!optimizeStatus) return;
+  optimizeStatus.textContent = message || "";
+  optimizeStatus.style.color = isError ? "#d14343" : "";
+}
+
 function setAuthStatus(message, isError = false) {
   authStatus.textContent = message || "";
   authStatus.style.color = isError ? "#d14343" : "";
@@ -167,10 +328,168 @@ function loadPromptLibrary() {
   renderPromptLibraryOptions();
 }
 
+function renderPromptPersonaOptions() {
+  if (!promptPersonaSelect) return;
+
+  promptPersonaSelect.innerHTML = "";
+  if (state.promptPersonas.length === 0) {
+    promptPersonaSelect.innerHTML = `<option value="">暂无可用人设</option>`;
+    promptPersonaSelect.disabled = true;
+    if (promptPersonaSummary) {
+      promptPersonaSummary.textContent = "请先在 data/personas 文件夹中添加人设 .md 文件。";
+    }
+    return;
+  }
+
+  promptPersonaSelect.disabled = false;
+  state.promptPersonas.forEach((persona) => {
+    const option = document.createElement("option");
+    option.value = persona.id;
+    option.textContent = persona.name;
+    if (persona.id === state.selectedPromptPersonaId) {
+      option.selected = true;
+    }
+    promptPersonaSelect.appendChild(option);
+  });
+
+  const activePersona = state.promptPersonas.find((persona) => persona.id === state.selectedPromptPersonaId) || state.promptPersonas[0];
+  if (activePersona && state.selectedPromptPersonaId !== activePersona.id) {
+    state.selectedPromptPersonaId = activePersona.id;
+    promptPersonaSelect.value = activePersona.id;
+  }
+  if (promptPersonaSummary) {
+    promptPersonaSummary.textContent = activePersona?.summary || "";
+  }
+}
+
+async function loadPromptPersonas() {
+  try {
+    const response = await fetch("/api/prompt-personas");
+    if (response.status === 401) {
+      state.promptPersonas = [];
+      state.selectedPromptPersonaId = "";
+      renderPromptPersonaOptions();
+      return;
+    }
+
+    const payload = await readJsonSafely(response);
+    state.promptPersonas = Array.isArray(payload.items) ? payload.items : [];
+    if (!state.selectedPromptPersonaId && state.promptPersonas[0]) {
+      state.selectedPromptPersonaId = state.promptPersonas[0].id;
+    }
+    renderPromptPersonaOptions();
+  } catch (error) {
+    state.promptPersonas = [];
+    state.selectedPromptPersonaId = "";
+    renderPromptPersonaOptions();
+  }
+}
+
 function appendPromptText(text) {
   if (!promptTextarea || !text) return;
   const current = promptTextarea.value.trim();
   promptTextarea.value = current ? `${current}\n${text}` : text;
+  resetOptimizedPrompt();
+}
+
+function getPromptMode() {
+  return form.querySelector('input[name="promptMode"]:checked')?.value || "default";
+}
+
+function hasOptimizedPrompt() {
+  const value = optimizedPromptTextarea?.value || state.optimizedPrompt || "";
+  return Boolean(value.trim());
+}
+
+function hasSourcePrompt() {
+  return Boolean((promptTextarea?.value || "").trim());
+}
+
+function syncSubmitButtonState() {
+  if (!submitButton) return;
+  if (state.progressTimer) return;
+
+  const promptMode = getPromptMode();
+  const canSubmit = state.baseImageFile && (promptMode === "optimized" ? hasOptimizedPrompt() : true);
+  submitButton.disabled = !canSubmit;
+}
+
+function resetOptimizedPrompt() {
+  state.optimizedPrompt = "";
+  if (optimizedPromptTextarea) {
+    optimizedPromptTextarea.value = "";
+  }
+  setOptimizeStatus("");
+  syncSubmitButtonState();
+}
+
+function syncPromptModeUI() {
+  const isOptimized = getPromptMode() === "optimized";
+  optimizedPromptPanel?.classList.toggle("hidden", !isOptimized);
+  if (!isOptimized) {
+    clearOptimizeProgress(true);
+    setOptimizeStatus("");
+  }
+  syncSubmitButtonState();
+  renderPromptPersonaOptions();
+}
+
+function getAspectOrientation(value) {
+  if (value === "3:4" || value === "9:16" || value === "4:5") return "portrait";
+  if (value === "4:3" || value === "16:9" || value === "5:4") return "landscape";
+  return null;
+}
+
+function syncAspectRatioPreview() {
+  if (!ratioOrientationPreview) return;
+  const selected = form.querySelector('input[name="aspectRatio"]:checked')?.value || "auto";
+  const orientation = getAspectOrientation(selected);
+
+  ratioOrientationPreview.querySelectorAll(".orientation-card").forEach((node) => {
+    const isActive = orientation && node.dataset.orientation === orientation;
+    node.classList.toggle("active", Boolean(isActive));
+  });
+}
+
+function supportsBrowserNotifications() {
+  return typeof window !== "undefined" && "Notification" in window;
+}
+
+async function ensureBrowserNotificationPermission() {
+  if (!supportsBrowserNotifications()) return false;
+  if (Notification.permission === "granted") return true;
+  if (Notification.permission === "denied") return false;
+
+  if (!state.notificationPermissionPromise) {
+    state.notificationPermissionPromise = Notification.requestPermission()
+      .catch(() => "denied")
+      .finally(() => {
+        state.notificationPermissionPromise = null;
+      });
+  }
+
+  const permission = await state.notificationPermissionPromise;
+  return permission === "granted";
+}
+
+async function sendBrowserNotification(title, body) {
+  const allowed = await ensureBrowserNotificationPermission();
+  if (!allowed) return;
+
+  try {
+    const notification = new Notification(title, {
+      body,
+      tag: "banana-pro-generate",
+      renotify: true,
+    });
+
+    notification.onclick = () => {
+      window.focus();
+      notification.close();
+    };
+  } catch (error) {
+    // Ignore notification failures so generation flow is unaffected.
+  }
 }
 
 function getAudioContext() {
@@ -274,6 +593,7 @@ function renderMeta(entry) {
   const values = [
     `比例 ${entry.aspectRatio}`,
     `大小 ${entry.imageSize}`,
+    entry.promptMode === "optimized" ? "AI 翻译优化" : "默认提示词",
     entry.enableSearch ? "已开启搜索" : "未开启搜索",
     `${entry.referenceCount || 0} 张参考图`,
   ];
@@ -335,6 +655,20 @@ function clearProgress() {
     clearInterval(state.progressTimer);
     state.progressTimer = null;
   }
+  syncSubmitButtonState();
+}
+
+function clearOptimizeProgress(hide = false) {
+  if (state.optimizeProgressTimer) {
+    clearInterval(state.optimizeProgressTimer);
+    state.optimizeProgressTimer = null;
+  }
+  if (hide) {
+    optimizeProgress?.classList.add("hidden");
+    if (optimizeProgress) {
+      optimizeProgress.innerHTML = "";
+    }
+  }
 }
 
 function startProgressSimulation() {
@@ -385,6 +719,53 @@ function renderLoading() {
   );
 
   startProgressSimulation();
+}
+
+function startOptimizeProgressSimulation() {
+  if (!optimizeProgress || !progressTemplate) return;
+
+  clearOptimizeProgress();
+  state.optimizeProgressValue = 0;
+  optimizeProgress.classList.remove("hidden");
+  optimizeProgress.innerHTML = "";
+
+  const progressNode = progressTemplate.content.firstElementChild.cloneNode(true);
+  optimizeProgress.appendChild(progressNode);
+
+  const fill = optimizeProgress.querySelector(".progress-fill");
+  const label = optimizeProgress.querySelector(".progress-label");
+  const value = optimizeProgress.querySelector(".progress-value");
+
+  const applyStep = (step) => {
+    state.optimizeProgressValue = step.value;
+    if (fill) fill.style.width = `${step.value}%`;
+    if (label) label.textContent = step.label;
+    if (value) value.textContent = `${step.value}%`;
+  };
+
+  applyStep(optimizeProgressSteps[0]);
+  let stepIndex = 1;
+
+  state.optimizeProgressTimer = setInterval(() => {
+    if (stepIndex >= optimizeProgressSteps.length) {
+      clearOptimizeProgress();
+      return;
+    }
+    applyStep(optimizeProgressSteps[stepIndex]);
+    stepIndex += 1;
+  }, 900);
+}
+
+function finishOptimizeProgress(message = "优化完成") {
+  if (!optimizeProgress) return;
+  clearOptimizeProgress();
+
+  const fill = optimizeProgress.querySelector(".progress-fill");
+  const label = optimizeProgress.querySelector(".progress-label");
+  const value = optimizeProgress.querySelector(".progress-value");
+  if (fill) fill.style.width = "100%";
+  if (label) label.textContent = message;
+  if (value) value.textContent = "100%";
 }
 
 function renderHistory(items) {
@@ -469,14 +850,93 @@ async function readJsonSafely(response) {
   }
 }
 
-baseInput.addEventListener("change", () => {
+async function optimizePrompt() {
+  const sourcePrompt = (promptTextarea.value || "").trim();
+  if (!sourcePrompt) {
+    setOptimizeStatus("请先输入需要优化的提示词。", true);
+    return false;
+  }
+  if (!state.selectedPromptPersonaId) {
+    setOptimizeStatus("请先选择一个转译人设。", true);
+    return false;
+  }
+
+  state.optimizingPrompt = true;
+  optimizePromptButton.disabled = true;
+  setOptimizeStatus("正在调用 GPT-5.4 优化提示词...");
+  startOptimizeProgressSimulation();
+
+  try {
+    const response = await fetch("/api/optimize-prompt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt: sourcePrompt,
+        personaId: state.selectedPromptPersonaId,
+      }),
+    });
+    const payload = await readJsonSafely(response);
+    if (response.status === 404) {
+      throw new Error("当前服务还没有加载提示词优化接口，请重启服务后再试。");
+    }
+    if (!response.ok) {
+      throw new Error(payload.details || payload.error || "提示词优化失败");
+    }
+
+    state.optimizedPrompt = payload.prompt || "";
+    if (!state.optimizedPrompt) {
+      throw new Error("提示词优化成功，但没有拿到结果。");
+    }
+
+    optimizedPromptTextarea.value = state.optimizedPrompt;
+    finishOptimizeProgress("优化完成");
+    setOptimizeStatus(`提示词优化完成，当前使用人设：${payload.personaName || "未命名人设"}。`);
+    syncSubmitButtonState();
+    return true;
+  } catch (error) {
+    clearOptimizeProgress(true);
+    const message = error instanceof Error ? error.message : "提示词优化失败";
+    setOptimizeStatus(message, true);
+    return false;
+  } finally {
+    state.optimizingPrompt = false;
+    optimizePromptButton.disabled = false;
+  }
+}
+
+baseInput.addEventListener("change", async () => {
   const file = baseInput.files && baseInput.files[0];
-  state.baseImageFile = file || null;
+  let processedFile = file || null;
+
+  if (file) {
+    try {
+      const result = await compressBaseImageIfNeeded(file);
+      processedFile = result.file;
+      if (result.compressed) {
+        setStatus(
+          `基础结构图已压缩为 JPG，${formatFileSize(file.size)} -> ${formatFileSize(processedFile.size)}。`,
+        );
+      } else {
+        setStatus("");
+      }
+    } catch (error) {
+      processedFile = null;
+      baseInput.value = "";
+      const message = error instanceof Error ? error.message : "基础结构图压缩失败。";
+      setStatus(message, true);
+    }
+  }
+
+  state.baseImageFile = processedFile;
+  if (processedFile) {
+    syncNativeInputFiles(baseInput, [processedFile]);
+  }
   baseInput.required = !state.baseImageFile;
   renderBasePreview();
+  syncSubmitButtonState();
 });
 
-referenceInput.addEventListener("change", () => {
+referenceInput.addEventListener("change", async () => {
   const newFiles = Array.from(referenceInput.files || []);
   if (newFiles.length === 0) {
     return;
@@ -484,15 +944,74 @@ referenceInput.addEventListener("change", () => {
 
   const remainingSlots = Math.max(0, 6 - state.referenceFiles.length);
   const acceptedFiles = newFiles.slice(0, remainingSlots);
-  state.referenceFiles = [...state.referenceFiles, ...acceptedFiles];
+  const processedFiles = [];
+  let compressedCount = 0;
+  let failedCount = 0;
+
+  for (const file of acceptedFiles) {
+    try {
+      const result = await compressReferenceImageIfNeeded(file);
+      processedFiles.push(result.file);
+      if (result.compressed) {
+        compressedCount += 1;
+      }
+    } catch (error) {
+      failedCount += 1;
+    }
+  }
+
+  state.referenceFiles = [...state.referenceFiles, ...processedFiles];
   syncNativeInputFiles(referenceInput, state.referenceFiles);
 
+  const messages = [];
+  if (compressedCount > 0) {
+    messages.push(`${compressedCount} 张参考图已压缩到 2MB 以内。`);
+  }
   if (newFiles.length > remainingSlots) {
-    setStatus("参考图最多上传 6 张，超出的图片已忽略。", true);
+    messages.push("参考图最多上传 6 张，超出的图片已忽略。");
+  }
+  if (failedCount > 0) {
+    messages.push(`${failedCount} 张参考图压缩失败，已跳过。`);
+  }
+
+  if (failedCount > 0) {
+    setStatus(messages.join(" "), true);
   } else {
-    setStatus("");
+    setStatus(messages.join(" "));
   }
   renderReferencePreview();
+  syncSubmitButtonState();
+});
+
+promptTextarea?.addEventListener("input", () => {
+  if (getPromptMode() === "optimized") {
+    resetOptimizedPrompt();
+  }
+});
+
+promptPersonaSelect?.addEventListener("change", () => {
+  state.selectedPromptPersonaId = promptPersonaSelect.value;
+  const activePersona = state.promptPersonas.find((persona) => persona.id === state.selectedPromptPersonaId);
+  if (promptPersonaSummary) {
+    promptPersonaSummary.textContent = activePersona?.summary || "";
+  }
+  resetOptimizedPrompt();
+});
+
+form.querySelectorAll('input[name="promptMode"]').forEach((node) => {
+  node.addEventListener("change", () => {
+    syncPromptModeUI();
+  });
+});
+
+aspectRatioGroup?.querySelectorAll('input[name="aspectRatio"]').forEach((node) => {
+  node.addEventListener("change", () => {
+    syncAspectRatioPreview();
+  });
+});
+
+optimizePromptButton?.addEventListener("click", async () => {
+  await optimizePrompt();
 });
 
 form.addEventListener("submit", async (event) => {
@@ -503,12 +1022,26 @@ form.addEventListener("submit", async (event) => {
     return;
   }
 
+  const promptMode = getPromptMode();
+  let finalPrompt = (promptTextarea.value || "").trim();
+  if (promptMode === "optimized") {
+    finalPrompt = (optimizedPromptTextarea?.value || state.optimizedPrompt || "").trim();
+    if (!finalPrompt) {
+      setStatus("当前处于 AI 翻译优化模式，请先点击“提示词优化”。", true);
+      syncSubmitButtonState();
+      return;
+    }
+  }
+
   submitButton.disabled = true;
   setStatus("图片正在生成，请稍等...");
   renderLoading();
+  void ensureBrowserNotificationPermission();
 
   const formData = new FormData();
-  formData.set("prompt", promptTextarea.value || "");
+  formData.set("prompt", finalPrompt);
+  formData.set("sourcePrompt", promptTextarea.value || "");
+  formData.set("promptMode", promptMode);
   formData.set("aspectRatio", form.querySelector('input[name="aspectRatio"]:checked').value);
   formData.set("imageSize", form.querySelector('input[name="imageSize"]:checked').value);
   formData.append("baseImage", state.baseImageFile);
@@ -532,6 +1065,7 @@ form.addEventListener("submit", async (event) => {
 
     setStatus("生成完成，可以直接下载，也会自动保留到历史记录。");
     playSuccessSound();
+    sendBrowserNotification("Banana Pro 图片生成成功", "图片已经生成完成，可以回到页面查看和下载。");
     renderCurrentResult(payload);
     await loadHistory();
   } catch (error) {
@@ -539,6 +1073,7 @@ form.addEventListener("submit", async (event) => {
     const message = error instanceof Error ? error.message : "生成失败";
     setStatus(message, true);
     playErrorSound();
+    sendBrowserNotification("Banana Pro 图片生成失败", message);
     renderCurrentResult(state.currentResult);
   } finally {
     clearProgress();
@@ -599,6 +1134,7 @@ loginForm.addEventListener("submit", async (event) => {
     setAuthStatus("");
     passwordInput.value = "";
     setAuthUI(true, payload.passwordEnabled !== false);
+    await loadPromptPersonas();
     await loadHistory();
   } catch (error) {
     const message = error instanceof Error ? error.message : "登录失败";
@@ -611,6 +1147,9 @@ logoutButton.addEventListener("click", async () => {
     await fetch("/api/auth/logout", { method: "POST" });
   } finally {
     state.historyHydrated = false;
+    state.promptPersonas = [];
+    state.selectedPromptPersonaId = "";
+    renderPromptPersonaOptions();
     historyList.innerHTML = `<div class="empty-history">登录后可查看历史记录。</div>`;
     renderCurrentResult(null);
     setAuthUI(false, true);
@@ -620,10 +1159,14 @@ logoutButton.addEventListener("click", async () => {
 async function bootstrap() {
   try {
     loadPromptLibrary();
+    renderPromptPersonaOptions();
+    syncPromptModeUI();
+    syncAspectRatioPreview();
     const response = await fetch("/api/auth/status");
     const payload = await readJsonSafely(response);
     setAuthUI(Boolean(payload.authenticated), Boolean(payload.passwordEnabled));
     if (!payload.passwordEnabled || payload.authenticated) {
+      await loadPromptPersonas();
       await loadHistory();
     } else {
       historyList.innerHTML = `<div class="empty-history">登录后可查看历史记录。</div>`;
@@ -631,6 +1174,9 @@ async function bootstrap() {
   } catch (error) {
     historyList.innerHTML = `<div class="empty-history">初始化失败，请刷新重试。</div>`;
   }
+
+  syncSubmitButtonState();
+  syncAspectRatioPreview();
 }
 
 bootstrap();

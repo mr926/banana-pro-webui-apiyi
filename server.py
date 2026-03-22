@@ -22,12 +22,15 @@ ROOT_DIR = Path(__file__).resolve().parent
 PUBLIC_DIR = ROOT_DIR / "public"
 DATA_DIR = ROOT_DIR / "data"
 GENERATED_DIR = DATA_DIR / "generated"
+PERSONAS_DIR = DATA_DIR / "personas"
 HISTORY_FILE = DATA_DIR / "history.json"
 ENV_FILE = ROOT_DIR / ".env"
 
 DEFAULT_API_URL = "https://api.apiyi.com/v1beta/models/gemini-3-pro-image-preview:generateContent"
+DEFAULT_PROMPT_OPTIMIZER_BASE_URL = "https://api.apiyi.com/v1"
 DEFAULT_PORT = 8787
 TIMEOUT_MAP = {"1K": 180, "2K": 300, "4K": 360}
+PROMPT_OPTIMIZER_TIMEOUT = 90
 SESSION_COOKIE_NAME = "banana_ui_session"
 SESSIONS: Dict[str, bool] = {}
 
@@ -35,6 +38,7 @@ SESSIONS: Dict[str, bool] = {}
 def ensure_dirs() -> None:
     PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
     GENERATED_DIR.mkdir(parents=True, exist_ok=True)
+    PERSONAS_DIR.mkdir(parents=True, exist_ok=True)
     if not HISTORY_FILE.exists():
         HISTORY_FILE.write_text("[]", encoding="utf-8")
 
@@ -268,7 +272,7 @@ def map_output_size(size_key: str) -> str:
         "2K": "2K",
         "4K": "4K",
     }
-    return mapping.get(size_key.upper(), "2K")
+    return mapping.get(size_key.upper(), "4K")
 
 
 def build_prompt(user_prompt: str, reference_count: int) -> str:
@@ -382,6 +386,114 @@ def extension_for_mime(mime_type: str) -> str:
     return mapping.get(mime_type, ".png")
 
 
+def slugify_name(value: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9._-]+", "-", value).strip("-").lower() or "persona"
+
+
+def parse_persona_markdown(path: Path) -> Optional[dict]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+
+    if len(lines) < 3:
+        return None
+
+    name = lines[0].strip()
+    summary = lines[1].strip()
+    content = "\n".join(lines[2:]).strip()
+    if not name or not summary or not content:
+        return None
+
+    return {
+        "id": slugify_name(path.stem),
+        "name": name,
+        "summary": summary,
+        "content": content,
+        "filename": path.name,
+    }
+
+
+def read_prompt_personas() -> List[dict]:
+    personas: List[dict] = []
+    for path in sorted(PERSONAS_DIR.glob("*.md")):
+        persona = parse_persona_markdown(path)
+        if persona:
+            personas.append(persona)
+    return personas
+
+
+def get_prompt_persona(persona_id: str) -> Optional[dict]:
+    target = persona_id.strip().lower()
+    if not target:
+        return None
+    for persona in read_prompt_personas():
+        if persona["id"] == target:
+            return persona
+    return None
+
+
+def build_prompt_optimizer_url(base_url: str) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/chat/completions"):
+        return normalized
+    return normalized + "/chat/completions"
+
+
+def build_prompt_optimizer_payload(user_prompt: str, persona_content: str) -> dict:
+    source_text = user_prompt.strip()
+    return {
+        "model": "gpt-5.4",
+        "messages": [
+            {
+                "role": "system",
+                "content": persona_content,
+            },
+            {
+                "role": "user",
+                "content": f"请把以下内容转译成适合 nano banana pro 模型生成图片使用的英文提示词：{source_text}",
+            },
+        ],
+    }
+
+
+def extract_text_from_llm_response(payload: dict) -> Optional[str]:
+    output_text = payload.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text.strip()
+
+    choices = payload.get("choices")
+    if isinstance(choices, list):
+        for choice in choices:
+            message = choice.get("message") or {}
+            content = message.get("content")
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+            if isinstance(content, list):
+                parts: List[str] = []
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "text" and item.get("text"):
+                        parts.append(str(item["text"]))
+                merged = "\n".join(part.strip() for part in parts if part and part.strip()).strip()
+                if merged:
+                    return merged
+
+    output = payload.get("output")
+    if isinstance(output, list):
+        parts: List[str] = []
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            for content in item.get("content") or []:
+                if isinstance(content, dict) and content.get("type") == "output_text" and content.get("text"):
+                    parts.append(str(content["text"]))
+        merged = "\n".join(part.strip() for part in parts if part and part.strip()).strip()
+        if merged:
+            return merged
+
+    return None
+
+
 class AppHandler(BaseHTTPRequestHandler):
     server_version = "BananaProUI/1.0"
 
@@ -454,6 +566,26 @@ class AppHandler(BaseHTTPRequestHandler):
                 },
             )
 
+        if parsed.path == "/api/prompt-personas":
+            if not self.ensure_authenticated():
+                return
+            personas = read_prompt_personas()
+            return json_response(
+                self,
+                200,
+                {
+                    "items": [
+                        {
+                            "id": persona["id"],
+                            "name": persona["name"],
+                            "summary": persona["summary"],
+                            "filename": persona["filename"],
+                        }
+                        for persona in personas
+                    ]
+                },
+            )
+
         if parsed.path == "/api/history":
             if not self.ensure_authenticated():
                 return
@@ -495,6 +627,21 @@ class AppHandler(BaseHTTPRequestHandler):
                     500,
                     {
                         "error": "服务端处理生成请求时发生异常。",
+                        "details": str(exc),
+                    },
+                )
+
+        if parsed.path == "/api/optimize-prompt":
+            if not self.ensure_authenticated():
+                return
+            try:
+                return self.handle_optimize_prompt()
+            except Exception as exc:
+                return json_response(
+                    self,
+                    500,
+                    {
+                        "error": "服务端处理提示词优化请求时发生异常。",
                         "details": str(exc),
                     },
                 )
@@ -578,8 +725,10 @@ class AppHandler(BaseHTTPRequestHandler):
             return
 
         prompt = form.get("prompt", "")
+        source_prompt = form.get("sourcePrompt", "")
+        prompt_mode = form.get("promptMode", "default")
         aspect_ratio = form.get("aspectRatio", "auto")
-        image_size = map_output_size(form.get("imageSize", "2K"))
+        image_size = map_output_size(form.get("imageSize", "4K"))
         enable_search = form.get("enableSearch", "false").lower() == "true"
 
         base_upload = form.get("baseImage")
@@ -660,6 +809,8 @@ class AppHandler(BaseHTTPRequestHandler):
             "id": file_id,
             "createdAt": now.isoformat(timespec="seconds"),
             "prompt": prompt,
+            "sourcePrompt": source_prompt or prompt,
+            "promptMode": prompt_mode,
             "aspectRatio": aspect_ratio,
             "imageSize": image_size,
             "enableSearch": enable_search,
@@ -671,6 +822,92 @@ class AppHandler(BaseHTTPRequestHandler):
         }
         append_history(entry)
         json_response(self, 200, entry)
+
+    def handle_optimize_prompt(self) -> None:
+        api_key = get_setting("BANANA_PRO_LLM_API_KEY") or get_setting("BANANA_PRO_API_KEY")
+        base_url = get_setting("BANANA_PRO_LLM_API_BASE_URL", DEFAULT_PROMPT_OPTIMIZER_BASE_URL)
+
+        if not api_key:
+            return json_response(
+                self,
+                500,
+                {"error": "缺少 BANANA_PRO_LLM_API_KEY，请先在 .env 中配置。"},
+            )
+
+        try:
+            payload = self.read_json_body()
+        except Exception:
+            return json_response(self, 400, {"error": "提示词优化请求格式不正确。"})
+
+        prompt = str(payload.get("prompt", "")).strip()
+        persona_id = str(payload.get("personaId", "")).strip()
+        if not prompt:
+            return json_response(self, 400, {"error": "请先提供需要优化的提示词。"})
+
+        personas = read_prompt_personas()
+        if not personas:
+            return json_response(self, 500, {"error": "未找到可用的人设文件，请先在 data/personas 中添加 .md 文件。"})
+
+        persona = get_prompt_persona(persona_id) if persona_id else personas[0]
+        if not persona:
+            return json_response(self, 400, {"error": "未找到对应的人设，请重新选择。"})
+
+        request_payload = build_prompt_optimizer_payload(prompt, persona["content"])
+        request_body = json.dumps(request_payload).encode("utf-8")
+        request = urllib.request.Request(
+            build_prompt_optimizer_url(base_url),
+            data=request_body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(request, timeout=PROMPT_OPTIMIZER_TIMEOUT) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            return json_response(
+                self,
+                exc.code,
+                {
+                    "error": "上游提示词优化接口返回错误。",
+                    "details": raw,
+                },
+            )
+        except Exception as exc:
+            return json_response(
+                self,
+                502,
+                {
+                    "error": "调用提示词优化接口失败。",
+                    "details": str(exc),
+                },
+            )
+
+        optimized_prompt = extract_text_from_llm_response(response_payload)
+        if not optimized_prompt:
+            return json_response(
+                self,
+                502,
+                {
+                    "error": "提示词优化接口返回成功，但没有拿到文本结果。",
+                    "details": response_payload,
+                },
+            )
+
+        json_response(
+            self,
+            200,
+            {
+                "prompt": optimized_prompt,
+                "model": "gpt-5.4",
+                "personaId": persona["id"],
+                "personaName": persona["name"],
+            },
+        )
 
     def handle_delete_history(self, item_id: str) -> None:
         removed = delete_history_item(item_id)
