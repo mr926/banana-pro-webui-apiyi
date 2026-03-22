@@ -29,6 +29,7 @@ ENV_FILE = ROOT_DIR / ".env"
 
 DEFAULT_API_URL = "https://api.apiyi.com/v1beta/models/gemini-3-pro-image-preview:generateContent"
 DEFAULT_PROMPT_OPTIMIZER_BASE_URL = "https://api.apiyi.com/v1"
+DEFAULT_PROMPT_OPTIMIZER_URL = "https://api.apiyi.com/v1/chat/completions"
 DEFAULT_PORT = 8787
 TIMEOUT_MAP = {"1K": 180, "2K": 300, "4K": 360}
 PROMPT_OPTIMIZER_TIMEOUT = 90
@@ -1010,7 +1011,12 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def handle_optimize_prompt(self) -> None:
         api_key = get_setting("BANANA_PRO_LLM_API_KEY") or get_setting("BANANA_PRO_API_KEY")
-        base_url = get_setting("BANANA_PRO_LLM_API_BASE_URL", DEFAULT_PROMPT_OPTIMIZER_BASE_URL)
+        api_url = get_setting("BANANA_PRO_LLM_API_URL")
+        if not api_url:
+            legacy_base_url = get_setting("BANANA_PRO_LLM_API_BASE_URL", DEFAULT_PROMPT_OPTIMIZER_BASE_URL)
+            api_url = build_prompt_optimizer_url(legacy_base_url)
+        if not api_url:
+            api_url = DEFAULT_PROMPT_OPTIMIZER_URL
 
         if not api_key:
             return json_response(
@@ -1040,7 +1046,7 @@ class AppHandler(BaseHTTPRequestHandler):
         request_payload = build_prompt_optimizer_payload(prompt, persona["content"])
         request_body = json.dumps(request_payload).encode("utf-8")
         request = urllib.request.Request(
-            build_prompt_optimizer_url(base_url),
+            api_url,
             data=request_body,
             headers={
                 "Content-Type": "application/json",

@@ -9,6 +9,7 @@ services:
     environment:
       BANANA_PRO_API_KEY: ${BANANA_PRO_API_KEY}
       BANANA_PRO_LLM_API_KEY: ${BANANA_PRO_LLM_API_KEY:-}
+      BANANA_PRO_LLM_API_URL: ${BANANA_PRO_LLM_API_URL:-https://api.apiyi.com/v1/chat/completions}
       BANANA_PRO_API_URL: ${BANANA_PRO_API_URL:-https://api.apiyi.com/v1beta/models/gemini-3-pro-image-preview:generateContent}
       BANANA_PRO_UI_PASSWORD: ${BANANA_PRO_UI_PASSWORD:-}
       BANANA_PRO_HOST: ${BANANA_PRO_HOST:-0.0.0.0}
