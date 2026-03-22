@@ -4,7 +4,6 @@ const albumAuthOverlay = document.getElementById("album-auth-overlay");
 const albumLoginForm = document.getElementById("album-login-form");
 const albumPasswordInput = document.getElementById("album-password-input");
 const albumAuthStatus = document.getElementById("album-auth-status");
-const albumLogoutButton = document.getElementById("album-logout-button");
 
 function setAlbumAuthStatus(message, isError = false) {
   albumAuthStatus.textContent = message || "";
@@ -35,7 +34,6 @@ function setAlbumAuthUI(authenticated, passwordEnabled) {
   const needsPassword = passwordEnabled && !authenticated;
   albumAuthOverlay.classList.toggle("hidden", !needsPassword);
   albumAuthOverlay.setAttribute("aria-hidden", String(!needsPassword));
-  albumLogoutButton.classList.toggle("hidden", !passwordEnabled || !authenticated);
   if (needsPassword) {
     albumPasswordInput.focus();
   }
@@ -112,15 +110,6 @@ albumLoginForm.addEventListener("submit", async (event) => {
     await loadAlbum();
   } catch (error) {
     setAlbumAuthStatus(error instanceof Error ? error.message : "登录失败", true);
-  }
-});
-
-albumLogoutButton.addEventListener("click", async () => {
-  try {
-    await fetch("/api/auth/logout", { method: "POST" });
-  } finally {
-    setAlbumAuthUI(false, true);
-    albumGrid.innerHTML = `<div class="empty-history">登录后可查看历史相册。</div>`;
   }
 });
 
