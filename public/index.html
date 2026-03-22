@@ -155,10 +155,7 @@
                 <select id="prompt-library-select" class="prompt-select">
                   <option value="">从提示词列表中选择并插入</option>
                 </select>
-                <label class="ghost-button prompt-import">
-                  <input id="prompt-library-file" type="file" accept=".txt,text/plain" />
-                  导入 txt 词库
-                </label>
+                <button type="button" id="manage-prompt-library-button" class="ghost-button">管理提示词</button>
               </div>
               <textarea
                 id="prompt"
@@ -168,9 +165,12 @@
               ></textarea>
               <div id="optimized-prompt-panel" class="optimized-prompt-panel hidden">
                 <div class="persona-toolbar">
-                  <select id="prompt-persona-select" class="prompt-select">
-                    <option value="">选择转译人设</option>
-                  </select>
+                  <div class="prompt-toolbar">
+                    <select id="prompt-persona-select" class="prompt-select">
+                      <option value="">选择转译人设</option>
+                    </select>
+                    <button type="button" id="manage-prompt-persona-button" class="ghost-button">管理</button>
+                  </div>
                   <p id="prompt-persona-summary" class="persona-summary"></p>
                 </div>
                 <button type="button" id="optimize-prompt-button" class="primary-button optimize-button">提示词优化</button>
@@ -221,6 +221,85 @@
           <div id="history-list" class="history-list"></div>
         </section>
       </main>
+    </div>
+
+    <div id="prompt-library-modal" class="modal-overlay hidden" aria-hidden="true">
+      <div class="modal-card">
+        <div class="modal-head">
+          <div>
+            <div class="eyebrow">Prompt Library</div>
+            <h2>管理提示词</h2>
+          </div>
+          <button type="button" id="close-prompt-library-modal" class="ghost-button">关闭</button>
+        </div>
+        <p class="modal-intro">一行对应一个下拉列表选项，内容会保存到 `data/prompt-library.md`。</p>
+        <textarea
+          id="prompt-library-editor"
+          class="modal-textarea"
+          rows="14"
+          placeholder="每行输入一条提示词"
+        ></textarea>
+        <div class="modal-actions">
+          <button type="button" id="save-prompt-library-button" class="primary-button modal-primary">保存提示词</button>
+        </div>
+        <p id="prompt-library-modal-status" class="form-status inline-status"></p>
+      </div>
+    </div>
+
+    <div id="prompt-persona-modal" class="modal-overlay hidden" aria-hidden="true">
+      <div class="modal-card modal-card-wide">
+        <div class="modal-head">
+          <div>
+            <div class="eyebrow">Prompt Personas</div>
+            <h2>管理提示词优化人格</h2>
+          </div>
+          <button type="button" id="close-prompt-persona-modal" class="ghost-button">关闭</button>
+        </div>
+        <div class="modal-two-column">
+          <section class="modal-panel">
+            <div class="modal-panel-head">
+              <h3>上传新 md 文件</h3>
+            </div>
+            <div class="prompt-toolbar">
+              <label class="ghost-button prompt-import">
+                <input id="prompt-persona-file" type="file" accept=".md,text/markdown,text/plain" />
+                选择 md 文件
+              </label>
+              <button type="button" id="upload-prompt-persona-button" class="ghost-button">上传</button>
+            </div>
+            <p class="modal-intro compact">md 文件格式：第一行名称，第二行简介，其余内容为系统提示词正文。</p>
+            <div id="prompt-persona-list" class="persona-list"></div>
+          </section>
+          <section class="modal-panel">
+            <div class="modal-panel-head">
+              <h3>编辑当前人格</h3>
+              <span id="prompt-persona-filename" class="meta-pill">未选择</span>
+            </div>
+            <label class="modal-field">
+              <span>名称</span>
+              <input id="prompt-persona-name-input" class="auth-input modal-input" type="text" placeholder="人格名称" />
+            </label>
+            <label class="modal-field">
+              <span>简介</span>
+              <input id="prompt-persona-summary-input" class="auth-input modal-input" type="text" placeholder="一句简介" />
+            </label>
+            <label class="modal-field">
+              <span>正文</span>
+              <textarea
+                id="prompt-persona-content-input"
+                class="modal-textarea"
+                rows="12"
+                placeholder="这里填写系统提示词正文"
+              ></textarea>
+            </label>
+            <div class="modal-actions split">
+              <button type="button" id="save-prompt-persona-button" class="primary-button modal-primary">保存修改</button>
+              <button type="button" id="delete-prompt-persona-button" class="danger-button">删除当前人格</button>
+            </div>
+            <p id="prompt-persona-modal-status" class="form-status inline-status"></p>
+          </section>
+        </div>
+      </div>
     </div>
 
     <div id="auth-overlay" class="auth-overlay hidden" aria-hidden="true">

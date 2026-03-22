@@ -24,6 +24,7 @@ DATA_DIR = ROOT_DIR / "data"
 GENERATED_DIR = DATA_DIR / "generated"
 PERSONAS_DIR = DATA_DIR / "personas"
 HISTORY_FILE = DATA_DIR / "history.json"
+PROMPT_LIBRARY_FILE = DATA_DIR / "prompt-library.md"
 ENV_FILE = ROOT_DIR / ".env"
 
 DEFAULT_API_URL = "https://api.apiyi.com/v1beta/models/gemini-3-pro-image-preview:generateContent"
@@ -41,6 +42,8 @@ def ensure_dirs() -> None:
     PERSONAS_DIR.mkdir(parents=True, exist_ok=True)
     if not HISTORY_FILE.exists():
         HISTORY_FILE.write_text("[]", encoding="utf-8")
+    if not PROMPT_LIBRARY_FILE.exists():
+        PROMPT_LIBRARY_FILE.write_text("", encoding="utf-8")
 
 
 def load_env_file() -> Dict[str, str]:
@@ -101,6 +104,22 @@ def delete_history_item(item_id: str) -> Optional[dict]:
 
     write_history(remaining)
     return removed
+
+
+def read_prompt_library_content() -> str:
+    try:
+        return PROMPT_LIBRARY_FILE.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def parse_prompt_library_items(content: str) -> List[str]:
+    return [line.strip() for line in content.splitlines() if line.strip()]
+
+
+def write_prompt_library_content(content: str) -> None:
+    normalized = "\n".join(line.rstrip() for line in content.replace("\r\n", "\n").split("\n"))
+    PROMPT_LIBRARY_FILE.write_text(normalized.strip(), encoding="utf-8")
 
 
 def json_response(
@@ -414,6 +433,10 @@ def parse_persona_markdown(path: Path) -> Optional[dict]:
     }
 
 
+def build_persona_markdown(name: str, summary: str, content: str) -> str:
+    return "\n".join([name.strip(), summary.strip(), content.strip()]).strip() + "\n"
+
+
 def read_prompt_personas() -> List[dict]:
     personas: List[dict] = []
     for path in sorted(PERSONAS_DIR.glob("*.md")):
@@ -431,6 +454,72 @@ def get_prompt_persona(persona_id: str) -> Optional[dict]:
         if persona["id"] == target:
             return persona
     return None
+
+
+def get_prompt_persona_path(persona_id: str) -> Optional[Path]:
+    target = persona_id.strip().lower()
+    if not target:
+        return None
+    for path in sorted(PERSONAS_DIR.glob("*.md")):
+        if slugify_name(path.stem) == target:
+            return path
+    return None
+
+
+def validate_persona_payload(payload: dict) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+    name = str(payload.get("name", "")).strip()
+    summary = str(payload.get("summary", "")).strip()
+    content = str(payload.get("content", "")).strip()
+    filename = safe_name(str(payload.get("filename", "")).strip() or "persona.md")
+    if not filename.lower().endswith(".md"):
+        filename = f"{filename}.md"
+    if not name or not summary or not content:
+        return None, None, None, "人设名称、简介和内容都不能为空。"
+    return name, summary, content, filename
+
+
+def create_prompt_persona(payload: dict) -> Tuple[Optional[dict], Optional[str]]:
+    name, summary, content, filename_or_error = validate_persona_payload(payload)
+    if not name or not summary or not content:
+        return None, filename_or_error
+
+    filename = filename_or_error or "persona.md"
+    target = PERSONAS_DIR / filename
+    if target.exists():
+        return None, "同名 md 文件已存在，请先重命名后再上传。"
+
+    target.write_text(build_persona_markdown(name, summary, content), encoding="utf-8")
+    persona = parse_persona_markdown(target)
+    if not persona:
+        return None, "上传的人设文件格式不正确，必须至少包含名称、简介和正文三部分。"
+    return persona, None
+
+
+def update_prompt_persona(persona_id: str, payload: dict) -> Tuple[Optional[dict], Optional[str]]:
+    target = get_prompt_persona_path(persona_id)
+    if not target:
+        return None, "未找到对应的人设文件。"
+
+    name, summary, content, error = validate_persona_payload(payload)
+    if error:
+        return None, error
+
+    target.write_text(build_persona_markdown(name, summary, content), encoding="utf-8")
+    persona = parse_persona_markdown(target)
+    if not persona:
+        return None, "保存失败，人设文件格式不正确。"
+    return persona, None
+
+
+def delete_prompt_persona(persona_id: str) -> bool:
+    target = get_prompt_persona_path(persona_id)
+    if not target or not target.exists():
+        return False
+    try:
+        target.unlink()
+    except OSError:
+        return False
+    return True
 
 
 def build_prompt_optimizer_url(base_url: str) -> str:
@@ -566,6 +655,20 @@ class AppHandler(BaseHTTPRequestHandler):
                 },
             )
 
+        if parsed.path == "/api/prompt-library":
+            if not self.ensure_authenticated():
+                return
+            content = read_prompt_library_content()
+            return json_response(
+                self,
+                200,
+                {
+                    "items": parse_prompt_library_items(content),
+                    "content": content,
+                    "filename": PROMPT_LIBRARY_FILE.name,
+                },
+            )
+
         if parsed.path == "/api/prompt-personas":
             if not self.ensure_authenticated():
                 return
@@ -585,6 +688,15 @@ class AppHandler(BaseHTTPRequestHandler):
                     ]
                 },
             )
+
+        if parsed.path.startswith("/api/prompt-personas/"):
+            if not self.ensure_authenticated():
+                return
+            persona_id = parsed.path.removeprefix("/api/prompt-personas/").strip()
+            persona = get_prompt_persona(persona_id)
+            if not persona:
+                return json_response(self, 404, {"error": "未找到对应的人设。"})
+            return json_response(self, 200, persona)
 
         if parsed.path == "/api/history":
             if not self.ensure_authenticated():
@@ -646,10 +758,40 @@ class AppHandler(BaseHTTPRequestHandler):
                     },
                 )
 
+        if parsed.path == "/api/prompt-library":
+            if not self.ensure_authenticated():
+                return
+            return self.handle_save_prompt_library()
+
+        if parsed.path == "/api/prompt-personas":
+            if not self.ensure_authenticated():
+                return
+            return self.handle_create_prompt_persona()
+
+        json_response(self, 404, {"error": "Not found"})
+
+    def do_PUT(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/prompt-personas/"):
+            if not self.ensure_authenticated():
+                return
+            persona_id = parsed.path.removeprefix("/api/prompt-personas/").strip()
+            if not persona_id:
+                return json_response(self, 400, {"error": "缺少要更新的人设 id。"})
+            return self.handle_update_prompt_persona(persona_id)
+
         json_response(self, 404, {"error": "Not found"})
 
     def do_DELETE(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/prompt-personas/"):
+            if not self.ensure_authenticated():
+                return
+            persona_id = parsed.path.removeprefix("/api/prompt-personas/").strip()
+            if not persona_id:
+                return json_response(self, 400, {"error": "缺少要删除的人设 id。"})
+            return self.handle_delete_prompt_persona(persona_id)
+
         if parsed.path.startswith("/api/history/"):
             if not self.ensure_authenticated():
                 return
@@ -823,6 +965,49 @@ class AppHandler(BaseHTTPRequestHandler):
         append_history(entry)
         json_response(self, 200, entry)
 
+    def handle_save_prompt_library(self) -> None:
+        try:
+            payload = self.read_json_body()
+        except Exception:
+            return json_response(self, 400, {"error": "提示词列表请求格式不正确。"})
+
+        content = str(payload.get("content", ""))
+        write_prompt_library_content(content)
+        saved = read_prompt_library_content()
+        return json_response(
+            self,
+            200,
+            {
+                "ok": True,
+                "items": parse_prompt_library_items(saved),
+                "content": saved,
+                "filename": PROMPT_LIBRARY_FILE.name,
+            },
+        )
+
+    def handle_create_prompt_persona(self) -> None:
+        try:
+            payload = self.read_json_body()
+        except Exception:
+            return json_response(self, 400, {"error": "人设上传请求格式不正确。"})
+
+        persona, error = create_prompt_persona(payload)
+        if error:
+            return json_response(self, 400, {"error": error})
+        return json_response(self, 200, {"ok": True, "item": persona})
+
+    def handle_update_prompt_persona(self, persona_id: str) -> None:
+        try:
+            payload = self.read_json_body()
+        except Exception:
+            return json_response(self, 400, {"error": "人设保存请求格式不正确。"})
+
+        persona, error = update_prompt_persona(persona_id, payload)
+        if error:
+            status = 404 if "未找到" in error else 400
+            return json_response(self, status, {"error": error})
+        return json_response(self, 200, {"ok": True, "item": persona})
+
     def handle_optimize_prompt(self) -> None:
         api_key = get_setting("BANANA_PRO_LLM_API_KEY") or get_setting("BANANA_PRO_API_KEY")
         base_url = get_setting("BANANA_PRO_LLM_API_BASE_URL", DEFAULT_PROMPT_OPTIMIZER_BASE_URL)
@@ -924,6 +1109,11 @@ class AppHandler(BaseHTTPRequestHandler):
                 pass
 
         json_response(self, 200, {"ok": True, "id": item_id})
+
+    def handle_delete_prompt_persona(self, persona_id: str) -> None:
+        if not delete_prompt_persona(persona_id):
+            return json_response(self, 404, {"error": "未找到对应的人设文件。"})
+        json_response(self, 200, {"ok": True, "id": persona_id})
 
     def parse_multipart_form(self) -> Optional[dict]:
         content_type = self.headers.get("Content-Type", "")

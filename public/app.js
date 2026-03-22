@@ -17,7 +17,7 @@ const passwordInput = document.getElementById("password-input");
 const authStatus = document.getElementById("auth-status");
 const logoutButton = document.getElementById("logout-button");
 const promptLibrarySelect = document.getElementById("prompt-library-select");
-const promptLibraryFile = document.getElementById("prompt-library-file");
+const managePromptLibraryButton = document.getElementById("manage-prompt-library-button");
 const promptTextarea = document.getElementById("prompt");
 const optimizePromptButton = document.getElementById("optimize-prompt-button");
 const optimizedPromptPanel = document.getElementById("optimized-prompt-panel");
@@ -25,9 +25,27 @@ const optimizedPromptTextarea = document.getElementById("optimized-prompt");
 const optimizeProgress = document.getElementById("optimize-progress");
 const optimizeStatus = document.getElementById("optimize-status");
 const promptPersonaSelect = document.getElementById("prompt-persona-select");
+const managePromptPersonaButton = document.getElementById("manage-prompt-persona-button");
 const promptPersonaSummary = document.getElementById("prompt-persona-summary");
 const aspectRatioGroup = document.getElementById("aspect-ratio-group");
 const ratioOrientationPreview = document.getElementById("ratio-orientation-preview");
+const promptLibraryModal = document.getElementById("prompt-library-modal");
+const closePromptLibraryModalButton = document.getElementById("close-prompt-library-modal");
+const promptLibraryEditor = document.getElementById("prompt-library-editor");
+const savePromptLibraryButton = document.getElementById("save-prompt-library-button");
+const promptLibraryModalStatus = document.getElementById("prompt-library-modal-status");
+const promptPersonaModal = document.getElementById("prompt-persona-modal");
+const closePromptPersonaModalButton = document.getElementById("close-prompt-persona-modal");
+const promptPersonaFileInput = document.getElementById("prompt-persona-file");
+const uploadPromptPersonaButton = document.getElementById("upload-prompt-persona-button");
+const promptPersonaList = document.getElementById("prompt-persona-list");
+const promptPersonaFilename = document.getElementById("prompt-persona-filename");
+const promptPersonaNameInput = document.getElementById("prompt-persona-name-input");
+const promptPersonaSummaryInput = document.getElementById("prompt-persona-summary-input");
+const promptPersonaContentInput = document.getElementById("prompt-persona-content-input");
+const savePromptPersonaButton = document.getElementById("save-prompt-persona-button");
+const deletePromptPersonaButton = document.getElementById("delete-prompt-persona-button");
+const promptPersonaModalStatus = document.getElementById("prompt-persona-modal-status");
 
 const state = {
   currentResult: null,
@@ -43,13 +61,14 @@ const state = {
   baseImageFile: null,
   referenceFiles: [],
   promptLibrary: [],
+  promptLibraryContent: "",
   promptPersonas: [],
   selectedPromptPersonaId: "",
+  editingPromptPersonaId: "",
+  editingPromptPersonaFilename: "",
   optimizedPrompt: "",
   optimizingPrompt: false,
 };
-
-const PROMPT_LIBRARY_STORAGE_KEY = "banana_prompt_library";
 
 const progressSteps = [
   { value: 12, label: "正在上传素材" },
@@ -302,13 +321,16 @@ function setAuthUI(authenticated, passwordEnabled) {
   }
 }
 
-function savePromptLibrary() {
-  localStorage.setItem(PROMPT_LIBRARY_STORAGE_KEY, JSON.stringify(state.promptLibrary));
-}
-
 function renderPromptLibraryOptions() {
   if (!promptLibrarySelect) return;
   promptLibrarySelect.innerHTML = `<option value="">从提示词列表中选择并插入</option>`;
+  if (state.promptLibrary.length === 0) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "暂无可用提示词";
+    promptLibrarySelect.appendChild(option);
+    return;
+  }
   state.promptLibrary.forEach((item, index) => {
     const option = document.createElement("option");
     option.value = String(index);
@@ -317,13 +339,88 @@ function renderPromptLibraryOptions() {
   });
 }
 
-function loadPromptLibrary() {
+function setPromptLibraryModalStatus(message, isError = false) {
+  if (!promptLibraryModalStatus) return;
+  promptLibraryModalStatus.textContent = message || "";
+  promptLibraryModalStatus.style.color = isError ? "#d14343" : "";
+}
+
+function setPromptPersonaModalStatus(message, isError = false) {
+  if (!promptPersonaModalStatus) return;
+  promptPersonaModalStatus.textContent = message || "";
+  promptPersonaModalStatus.style.color = isError ? "#d14343" : "";
+}
+
+function setModalVisible(modal, visible) {
+  if (!modal) return;
+  modal.classList.toggle("hidden", !visible);
+  modal.setAttribute("aria-hidden", String(!visible));
+}
+
+function resetPromptPersonaEditor() {
+  state.editingPromptPersonaId = "";
+  state.editingPromptPersonaFilename = "";
+  if (promptPersonaFilename) promptPersonaFilename.textContent = "未选择";
+  if (promptPersonaNameInput) promptPersonaNameInput.value = "";
+  if (promptPersonaSummaryInput) promptPersonaSummaryInput.value = "";
+  if (promptPersonaContentInput) promptPersonaContentInput.value = "";
+  if (savePromptPersonaButton) savePromptPersonaButton.disabled = true;
+  if (deletePromptPersonaButton) deletePromptPersonaButton.disabled = true;
+}
+
+function renderPromptPersonaManagerList() {
+  if (!promptPersonaList) return;
+  promptPersonaList.innerHTML = "";
+
+  if (state.promptPersonas.length === 0) {
+    promptPersonaList.innerHTML = `<div class="empty-history">暂无人设</div>`;
+    return;
+  }
+
+  state.promptPersonas.forEach((persona) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "persona-item";
+    if (persona.id === state.editingPromptPersonaId) {
+      button.classList.add("active");
+    }
+
+    const title = document.createElement("strong");
+    title.textContent = persona.name;
+    const summary = document.createElement("span");
+    summary.textContent = persona.summary || persona.filename || "";
+
+    button.appendChild(title);
+    button.appendChild(summary);
+    button.addEventListener("click", async () => {
+      try {
+        await loadPromptPersonaDetail(persona.id);
+        setPromptPersonaModalStatus("");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "加载人设详情失败";
+        setPromptPersonaModalStatus(message, true);
+      }
+    });
+
+    promptPersonaList.appendChild(button);
+  });
+}
+
+async function loadPromptLibrary() {
   try {
-    const raw = localStorage.getItem(PROMPT_LIBRARY_STORAGE_KEY);
-    const items = raw ? JSON.parse(raw) : [];
-    state.promptLibrary = Array.isArray(items) ? items.filter(Boolean) : [];
+    const response = await fetch("/api/prompt-library");
+    if (response.status === 401) {
+      state.promptLibrary = [];
+      state.promptLibraryContent = "";
+      renderPromptLibraryOptions();
+      return;
+    }
+    const payload = await readJsonSafely(response);
+    state.promptLibrary = Array.isArray(payload.items) ? payload.items : [];
+    state.promptLibraryContent = typeof payload.content === "string" ? payload.content : state.promptLibrary.join("\n");
   } catch (error) {
     state.promptLibrary = [];
+    state.promptLibraryContent = "";
   }
   renderPromptLibraryOptions();
 }
@@ -368,7 +465,9 @@ async function loadPromptPersonas() {
     if (response.status === 401) {
       state.promptPersonas = [];
       state.selectedPromptPersonaId = "";
+      state.editingPromptPersonaId = "";
       renderPromptPersonaOptions();
+      renderPromptPersonaManagerList();
       return;
     }
 
@@ -378,10 +477,76 @@ async function loadPromptPersonas() {
       state.selectedPromptPersonaId = state.promptPersonas[0].id;
     }
     renderPromptPersonaOptions();
+    renderPromptPersonaManagerList();
   } catch (error) {
     state.promptPersonas = [];
     state.selectedPromptPersonaId = "";
+    state.editingPromptPersonaId = "";
     renderPromptPersonaOptions();
+    renderPromptPersonaManagerList();
+  }
+}
+
+async function loadPromptPersonaDetail(personaId) {
+  const response = await fetch(`/api/prompt-personas/${encodeURIComponent(personaId)}`);
+  const payload = await readJsonSafely(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "加载人设详情失败");
+  }
+
+  state.editingPromptPersonaId = payload.id || personaId;
+  state.editingPromptPersonaFilename = payload.filename || "";
+  promptPersonaFilename.textContent = payload.filename || "未命名";
+  promptPersonaNameInput.value = payload.name || "";
+  promptPersonaSummaryInput.value = payload.summary || "";
+  promptPersonaContentInput.value = payload.content || "";
+  savePromptPersonaButton.disabled = false;
+  deletePromptPersonaButton.disabled = false;
+  renderPromptPersonaManagerList();
+}
+
+function openPromptLibraryModal() {
+  if (promptLibraryEditor) {
+    promptLibraryEditor.value = state.promptLibraryContent || state.promptLibrary.join("\n");
+    promptLibraryEditor.focus();
+  }
+  setPromptLibraryModalStatus("");
+  setModalVisible(promptLibraryModal, true);
+}
+
+function closePromptLibraryModal() {
+  setModalVisible(promptLibraryModal, false);
+}
+
+function openPromptPersonaModal() {
+  setPromptPersonaModalStatus("");
+  setModalVisible(promptPersonaModal, true);
+  void (async () => {
+    await loadPromptPersonas();
+    if (state.selectedPromptPersonaId) {
+      try {
+        await loadPromptPersonaDetail(state.selectedPromptPersonaId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "加载人设详情失败";
+        setPromptPersonaModalStatus(message, true);
+      }
+    } else {
+      resetPromptPersonaEditor();
+    }
+  })();
+}
+
+function closePromptPersonaModal() {
+  setModalVisible(promptPersonaModal, false);
+  setPromptPersonaModalStatus("");
+}
+
+function handleModalBackdropClick(event) {
+  if (event.target === promptLibraryModal) {
+    closePromptLibraryModal();
+  }
+  if (event.target === promptPersonaModal) {
+    closePromptPersonaModal();
   }
 }
 
@@ -850,6 +1015,108 @@ async function readJsonSafely(response) {
   }
 }
 
+async function savePromptLibraryContent() {
+  const content = promptLibraryEditor?.value || "";
+  const response = await fetch("/api/prompt-library", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  const payload = await readJsonSafely(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "保存提示词失败");
+  }
+
+  state.promptLibrary = Array.isArray(payload.items) ? payload.items : [];
+  state.promptLibraryContent = typeof payload.content === "string" ? payload.content : content;
+  renderPromptLibraryOptions();
+}
+
+async function uploadPromptPersonaFile() {
+  const file = promptPersonaFileInput?.files && promptPersonaFileInput.files[0];
+  if (!file) {
+    throw new Error("请先选择一个 md 文件。");
+  }
+
+  const text = await file.text();
+  const lines = text.split(/\r?\n/);
+  const response = await fetch("/api/prompt-personas", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      filename: file.name,
+      name: (lines[0] || "").trim(),
+      summary: (lines[1] || "").trim(),
+      content: lines.slice(2).join("\n").trim(),
+    }),
+  });
+  const payload = await readJsonSafely(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "上传人设失败");
+  }
+
+  promptPersonaFileInput.value = "";
+  await loadPromptPersonas();
+  if (payload.item?.id) {
+    await loadPromptPersonaDetail(payload.item.id);
+    state.selectedPromptPersonaId = payload.item.id;
+    renderPromptPersonaOptions();
+  }
+}
+
+async function saveEditingPromptPersona() {
+  if (!state.editingPromptPersonaId) {
+    throw new Error("请先选择一个要编辑的人设。");
+  }
+
+  const response = await fetch(`/api/prompt-personas/${encodeURIComponent(state.editingPromptPersonaId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      filename: state.editingPromptPersonaFilename,
+      name: promptPersonaNameInput?.value || "",
+      summary: promptPersonaSummaryInput?.value || "",
+      content: promptPersonaContentInput?.value || "",
+    }),
+  });
+  const payload = await readJsonSafely(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "保存人设失败");
+  }
+
+  await loadPromptPersonas();
+  if (payload.item?.id) {
+    state.selectedPromptPersonaId = payload.item.id;
+    await loadPromptPersonaDetail(payload.item.id);
+    renderPromptPersonaOptions();
+  }
+}
+
+async function deleteEditingPromptPersona() {
+  if (!state.editingPromptPersonaId) {
+    throw new Error("请先选择一个要删除的人设。");
+  }
+
+  const response = await fetch(`/api/prompt-personas/${encodeURIComponent(state.editingPromptPersonaId)}`, {
+    method: "DELETE",
+  });
+  const payload = await readJsonSafely(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "删除人设失败");
+  }
+
+  await loadPromptPersonas();
+  if (state.selectedPromptPersonaId) {
+    try {
+      await loadPromptPersonaDetail(state.selectedPromptPersonaId);
+    } catch (error) {
+      resetPromptPersonaEditor();
+    }
+  } else {
+    resetPromptPersonaEditor();
+  }
+}
+
 async function optimizePrompt() {
   const sourcePrompt = (promptTextarea.value || "").trim();
   if (!sourcePrompt) {
@@ -1092,24 +1359,63 @@ promptLibrarySelect?.addEventListener("change", () => {
   promptLibrarySelect.value = "";
 });
 
-promptLibraryFile?.addEventListener("change", async () => {
-  const file = promptLibraryFile.files && promptLibraryFile.files[0];
-  if (!file) {
+managePromptLibraryButton?.addEventListener("click", openPromptLibraryModal);
+closePromptLibraryModalButton?.addEventListener("click", closePromptLibraryModal);
+promptLibraryModal?.addEventListener("click", handleModalBackdropClick);
+
+savePromptLibraryButton?.addEventListener("click", async () => {
+  try {
+    await savePromptLibraryContent();
+    setPromptLibraryModalStatus(`已保存，共 ${state.promptLibrary.length} 条提示词。`);
+    setStatus(`提示词列表已更新，当前共 ${state.promptLibrary.length} 条。`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "保存提示词失败";
+    setPromptLibraryModalStatus(message, true);
+  }
+});
+
+managePromptPersonaButton?.addEventListener("click", openPromptPersonaModal);
+closePromptPersonaModalButton?.addEventListener("click", closePromptPersonaModal);
+promptPersonaModal?.addEventListener("click", handleModalBackdropClick);
+
+uploadPromptPersonaButton?.addEventListener("click", async () => {
+  try {
+    await uploadPromptPersonaFile();
+    setPromptPersonaModalStatus("人设上传成功。");
+    setOptimizeStatus("");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "上传人设失败";
+    setPromptPersonaModalStatus(message, true);
+  }
+});
+
+savePromptPersonaButton?.addEventListener("click", async () => {
+  try {
+    await saveEditingPromptPersona();
+    setPromptPersonaModalStatus("人设已保存。");
+    setOptimizeStatus("");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "保存人设失败";
+    setPromptPersonaModalStatus(message, true);
+  }
+});
+
+deletePromptPersonaButton?.addEventListener("click", async () => {
+  if (!state.editingPromptPersonaId) {
     return;
   }
+  const confirmed = window.confirm("确定删除当前人设吗？对应的 md 文件也会被删除。");
+  if (!confirmed) {
+    return;
+  }
+
   try {
-    const text = await file.text();
-    state.promptLibrary = text
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-    savePromptLibrary();
-    renderPromptLibraryOptions();
-    setStatus(`提示词列表已替换，当前共 ${state.promptLibrary.length} 条。`);
+    await deleteEditingPromptPersona();
+    setPromptPersonaModalStatus("人设已删除。");
+    setOptimizeStatus("");
   } catch (error) {
-    setStatus("导入提示词列表失败。", true);
-  } finally {
-    promptLibraryFile.value = "";
+    const message = error instanceof Error ? error.message : "删除人设失败";
+    setPromptPersonaModalStatus(message, true);
   }
 });
 
@@ -1134,6 +1440,7 @@ loginForm.addEventListener("submit", async (event) => {
     setAuthStatus("");
     passwordInput.value = "";
     setAuthUI(true, payload.passwordEnabled !== false);
+    await loadPromptLibrary();
     await loadPromptPersonas();
     await loadHistory();
   } catch (error) {
@@ -1147,8 +1454,14 @@ logoutButton.addEventListener("click", async () => {
     await fetch("/api/auth/logout", { method: "POST" });
   } finally {
     state.historyHydrated = false;
+    state.promptLibrary = [];
+    state.promptLibraryContent = "";
     state.promptPersonas = [];
     state.selectedPromptPersonaId = "";
+    closePromptLibraryModal();
+    closePromptPersonaModal();
+    resetPromptPersonaEditor();
+    renderPromptLibraryOptions();
     renderPromptPersonaOptions();
     historyList.innerHTML = `<div class="empty-history">登录后可查看历史记录。</div>`;
     renderCurrentResult(null);
@@ -1158,7 +1471,7 @@ logoutButton.addEventListener("click", async () => {
 
 async function bootstrap() {
   try {
-    loadPromptLibrary();
+    renderPromptLibraryOptions();
     renderPromptPersonaOptions();
     syncPromptModeUI();
     syncAspectRatioPreview();
@@ -1166,6 +1479,7 @@ async function bootstrap() {
     const payload = await readJsonSafely(response);
     setAuthUI(Boolean(payload.authenticated), Boolean(payload.passwordEnabled));
     if (!payload.passwordEnabled || payload.authenticated) {
+      await loadPromptLibrary();
       await loadPromptPersonas();
       await loadHistory();
     } else {
