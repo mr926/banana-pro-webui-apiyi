@@ -12,12 +12,16 @@
         <div>
           <div class="eyebrow">Album</div>
           <h1>历史相册</h1>
-          <p>查看、下载和删除已经生成的图片。</p>
+          <p>查看、下载和删除已经生成的图片。以下均为缩略图展示。</p>
         </div>
-        <div class="brand-actions">
+        <div class="brand-actions album-toolbar">
+          <button type="button" id="album-select-all" class="ghost-button">全选</button>
+          <button type="button" id="album-clear-selection" class="ghost-button">清空选择</button>
+          <button type="button" id="album-download-selected" class="primary-button">下载选中 ZIP</button>
           <a href="/" class="ghost-button">返回工作台</a>
         </div>
       </header>
+      <p id="album-selection-status" class="album-selection-status">已选择 0 张</p>
 
       <main>
         <div id="album-grid" class="album-grid"></div>
@@ -37,6 +41,10 @@
 
     <template id="album-item-template">
       <article class="album-card">
+        <label class="album-select-toggle">
+          <input class="album-select" type="checkbox" />
+          <span>选择</span>
+        </label>
         <img class="album-image" alt="历史相册图片" />
         <div class="album-info">
           <div class="album-meta">

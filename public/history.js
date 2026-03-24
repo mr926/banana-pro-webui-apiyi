@@ -4,6 +4,17 @@ const albumAuthOverlay = document.getElementById("album-auth-overlay");
 const albumLoginForm = document.getElementById("album-login-form");
 const albumPasswordInput = document.getElementById("album-password-input");
 const albumAuthStatus = document.getElementById("album-auth-status");
+const albumSelectAllButton = document.getElementById("album-select-all");
+const albumClearSelectionButton = document.getElementById("album-clear-selection");
+const albumDownloadSelectedButton = document.getElementById("album-download-selected");
+const albumSelectionStatus = document.getElementById("album-selection-status");
+
+const albumState = {
+  items: [],
+  selectedIds: new Set(),
+  authenticated: false,
+  passwordEnabled: false,
+};
 
 function setAlbumAuthStatus(message, isError = false) {
   albumAuthStatus.textContent = message || "";
@@ -31,12 +42,15 @@ async function readJsonSafely(response) {
 }
 
 function setAlbumAuthUI(authenticated, passwordEnabled) {
+  albumState.authenticated = authenticated;
+  albumState.passwordEnabled = passwordEnabled;
   const needsPassword = passwordEnabled && !authenticated;
   albumAuthOverlay.classList.toggle("hidden", !needsPassword);
   albumAuthOverlay.setAttribute("aria-hidden", String(!needsPassword));
   if (needsPassword) {
     albumPasswordInput.focus();
   }
+  syncAlbumToolbar();
 }
 
 async function deleteAlbumItem(id) {
@@ -47,17 +61,149 @@ async function deleteAlbumItem(id) {
   }
 }
 
+function parseDownloadFilename(response) {
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match && utf8Match[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch (error) {
+      // Ignore malformed value and continue fallback parsing.
+    }
+  }
+
+  const plainMatch = disposition.match(/filename="?([^"]+)"?/i);
+  if (plainMatch && plainMatch[1]) {
+    return plainMatch[1];
+  }
+  return "banana-pro-history.zip";
+}
+
+function getHistorySummaryText() {
+  const total = albumState.items.length;
+  const selected = albumState.selectedIds.size;
+  if (total === 0) {
+    return "暂无可选图片。";
+  }
+  return `已选择 ${selected} / ${total} 张`;
+}
+
+function normalizeSelection(items) {
+  const validIds = new Set(
+    items
+      .map((item) => item.id)
+      .filter((id) => typeof id === "string" && id),
+  );
+
+  Array.from(albumState.selectedIds).forEach((id) => {
+    if (!validIds.has(id)) {
+      albumState.selectedIds.delete(id);
+    }
+  });
+}
+
+function syncAlbumToolbar() {
+  const needsPassword = albumState.passwordEnabled && !albumState.authenticated;
+  const total = albumState.items.length;
+  const selectedCount = albumState.selectedIds.size;
+
+  if (albumSelectionStatus) {
+    albumSelectionStatus.textContent = needsPassword ? "登录后可进行批量选择与下载。" : getHistorySummaryText();
+    albumSelectionStatus.style.color = "";
+  }
+
+  if (albumSelectAllButton) {
+    albumSelectAllButton.disabled = needsPassword || total === 0 || selectedCount === total;
+  }
+  if (albumClearSelectionButton) {
+    albumClearSelectionButton.disabled = needsPassword || selectedCount === 0;
+  }
+  if (albumDownloadSelectedButton) {
+    albumDownloadSelectedButton.disabled = needsPassword || selectedCount === 0;
+  }
+}
+
+async function downloadSelectedAsZip() {
+  const ids = Array.from(albumState.selectedIds);
+  if (ids.length === 0) return;
+
+  if (albumDownloadSelectedButton) {
+    albumDownloadSelectedButton.disabled = true;
+    albumDownloadSelectedButton.textContent = "正在打包...";
+  }
+
+  try {
+    const response = await fetch("/api/history/download-zip", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    });
+
+    if (response.status === 401) {
+      setAlbumAuthUI(false, true);
+      albumGrid.innerHTML = `<div class="empty-history">登录后可查看历史相册。</div>`;
+      return;
+    }
+
+    if (!response.ok) {
+      const payload = await readJsonSafely(response);
+      throw new Error(payload.error || "下载 ZIP 失败");
+    }
+
+    const blob = await response.blob();
+    if (!blob.size) {
+      throw new Error("打包结果为空，请重试。");
+    }
+
+    const filename = parseDownloadFilename(response);
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "下载 ZIP 失败");
+  } finally {
+    if (albumDownloadSelectedButton) {
+      albumDownloadSelectedButton.textContent = "下载选中 ZIP";
+    }
+    syncAlbumToolbar();
+  }
+}
+
 function renderAlbum(items) {
+  albumState.items = Array.isArray(items) ? items : [];
+  normalizeSelection(albumState.items);
   albumGrid.innerHTML = "";
-  if (!items || items.length === 0) {
+  if (albumState.items.length === 0) {
     albumGrid.innerHTML = `<div class="empty-history">还没有历史图片。</div>`;
+    syncAlbumToolbar();
     return;
   }
 
-  items.forEach((entry) => {
+  albumState.items.forEach((entry) => {
     const node = albumTemplate.content.firstElementChild.cloneNode(true);
-    node.querySelector(".album-image").src = entry.imageUrl;
-    node.querySelector(".album-image").alt = entry.prompt || "历史相册图片";
+    const image = node.querySelector(".album-image");
+    const selector = node.querySelector(".album-select");
+    const hasValidId = typeof entry.id === "string" && entry.id;
+    image.src = entry.thumbUrl || "";
+    image.alt = entry.prompt || "历史相册图片";
+    image.loading = "lazy";
+    image.decoding = "async";
+    selector.checked = hasValidId ? albumState.selectedIds.has(entry.id) : false;
+    selector.disabled = !hasValidId;
+    selector.addEventListener("change", () => {
+      if (!hasValidId) return;
+      if (selector.checked) {
+        albumState.selectedIds.add(entry.id);
+      } else {
+        albumState.selectedIds.delete(entry.id);
+      }
+      syncAlbumToolbar();
+    });
     node.querySelector(".album-time").textContent = formatAlbumDate(entry.createdAt);
     node.querySelector(".album-tags").textContent = `${entry.aspectRatio} · ${entry.imageSize}`;
     node.querySelector(".album-prompt").textContent = entry.prompt || "未填写提示词";
@@ -67,6 +213,7 @@ function renderAlbum(items) {
     node.querySelector(".album-delete").addEventListener("click", async () => {
       try {
         await deleteAlbumItem(entry.id);
+        albumState.selectedIds.delete(entry.id);
         await loadAlbum();
       } catch (error) {
         alert(error instanceof Error ? error.message : "删除失败");
@@ -74,6 +221,7 @@ function renderAlbum(items) {
     });
     albumGrid.appendChild(node);
   });
+  syncAlbumToolbar();
 }
 
 async function loadAlbum() {
@@ -81,6 +229,9 @@ async function loadAlbum() {
   if (response.status === 401) {
     setAlbumAuthUI(false, true);
     albumGrid.innerHTML = `<div class="empty-history">登录后可查看历史相册。</div>`;
+    albumState.items = [];
+    albumState.selectedIds.clear();
+    syncAlbumToolbar();
     return;
   }
   const payload = await readJsonSafely(response);
@@ -128,4 +279,23 @@ async function bootstrapAlbum() {
   }
 }
 
+albumSelectAllButton?.addEventListener("click", () => {
+  albumState.items.forEach((entry) => {
+    if (typeof entry.id === "string" && entry.id) {
+      albumState.selectedIds.add(entry.id);
+    }
+  });
+  renderAlbum(albumState.items);
+});
+
+albumClearSelectionButton?.addEventListener("click", () => {
+  albumState.selectedIds.clear();
+  renderAlbum(albumState.items);
+});
+
+albumDownloadSelectedButton?.addEventListener("click", async () => {
+  await downloadSelectedAsZip();
+});
+
+syncAlbumToolbar();
 bootstrapAlbum();
