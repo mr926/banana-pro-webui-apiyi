@@ -54,6 +54,9 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  position: sticky;
+  top: 12px;
+  align-self: start;
   max-height: calc(100vh - 24px);
   overflow: auto;
   padding-right: 4px;
@@ -623,9 +626,8 @@ textarea:focus {
 
 .result-panel {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) 230px;
+  grid-template-rows: auto 230px;
   gap: 10px;
-  max-height: calc(100vh - 24px);
 }
 
 .preview-card,
@@ -658,8 +660,8 @@ textarea:focus {
 }
 
 .result-stage {
-  height: calc(100% - 52px);
-  min-height: 0;
+  height: auto;
+  min-height: 300px;
   border: 1.5px dashed #d1daee;
   border-radius: 18px;
   background: linear-gradient(180deg, rgba(248, 250, 255, 0.96), rgba(241, 245, 252, 0.96));
@@ -695,16 +697,23 @@ textarea:focus {
 }
 
 .result-view {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
-  height: 100%;
+  display: block;
+  height: auto;
 }
 
-.result-view img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
+.result-image-shell {
+  display: block;
+  overflow: hidden;
   background: #edf2fd;
+}
+
+.result-view img.result-image-original {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  max-height: none;
+  object-fit: initial;
 }
 
 .result-actions {
@@ -1160,6 +1169,12 @@ textarea:focus {
   .result-panel {
     max-height: none;
     overflow: visible;
+  }
+
+  .control-panel {
+    position: static;
+    top: auto;
+    align-self: stretch;
   }
 
   .primary-button {

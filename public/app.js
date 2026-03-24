@@ -857,7 +857,9 @@ function renderCurrentResult(entry) {
   resultStage.className = "result-stage";
   resultStage.innerHTML = `
     <div class="result-view">
-      <img src="${entry.imageUrl}" alt="生成结果" />
+      <div class="result-image-shell">
+        <img class="result-image-original" src="${entry.imageUrl}" alt="生成结果" />
+      </div>
       <div class="result-actions">
         <p>${entry.prompt ? entry.prompt : "未填写提示词"} </p>
         <div class="result-action-buttons">
