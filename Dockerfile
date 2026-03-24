@@ -7,6 +7,8 @@ ENV PYTHONUNBUFFERED=1
 ENV BANANA_PRO_PORT=8787
 ENV BANANA_PRO_HOST=0.0.0.0
 
+RUN pip install --no-cache-dir Pillow
+
 COPY server.py /app/server.py
 COPY public /app/public
 COPY data /app/data

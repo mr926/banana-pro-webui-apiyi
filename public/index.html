@@ -273,8 +273,20 @@
           <section class="modal-panel">
             <div class="modal-panel-head">
               <h3>编辑当前人格</h3>
-              <span id="prompt-persona-filename" class="meta-pill">未选择</span>
+              <div class="persona-editor-tools">
+                <button type="button" id="create-prompt-persona-button" class="ghost-button">新建人格</button>
+                <span id="prompt-persona-filename" class="meta-pill">未选择</span>
+              </div>
             </div>
+            <label class="modal-field">
+              <span>文件名（.md）</span>
+              <input
+                id="prompt-persona-filename-input"
+                class="auth-input modal-input"
+                type="text"
+                placeholder="例如：architectural-director.md"
+              />
+            </label>
             <label class="modal-field">
               <span>名称</span>
               <input id="prompt-persona-name-input" class="auth-input modal-input" type="text" placeholder="人格名称" />

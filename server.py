@@ -1,6 +1,7 @@
 import base64
 import cgi
 import hashlib
+import io
 import json
 import mimetypes
 import os
@@ -11,17 +12,24 @@ import sys
 import urllib.error
 import urllib.request
 import uuid
+import zipfile
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import quote, unquote, urlparse
+
+try:
+    from PIL import Image
+except Exception:
+    Image = None
 
 
 ROOT_DIR = Path(__file__).resolve().parent
 PUBLIC_DIR = ROOT_DIR / "public"
 DATA_DIR = ROOT_DIR / "data"
 GENERATED_DIR = DATA_DIR / "generated"
+THUMB_DIR = GENERATED_DIR / "thumbs"
 PERSONAS_DIR = DATA_DIR / "personas"
 HISTORY_FILE = DATA_DIR / "history.json"
 PROMPT_LIBRARY_FILE = DATA_DIR / "prompt-library.md"
@@ -35,11 +43,14 @@ TIMEOUT_MAP = {"1K": 180, "2K": 300, "4K": 360}
 PROMPT_OPTIMIZER_TIMEOUT = 90
 SESSION_COOKIE_NAME = "banana_ui_session"
 SESSIONS: Dict[str, bool] = {}
+THUMB_MAX_EDGE = 480
+THUMB_JPEG_QUALITY = 72
 
 
 def ensure_dirs() -> None:
     PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
     GENERATED_DIR.mkdir(parents=True, exist_ok=True)
+    THUMB_DIR.mkdir(parents=True, exist_ok=True)
     PERSONAS_DIR.mkdir(parents=True, exist_ok=True)
     if not HISTORY_FILE.exists():
         HISTORY_FILE.write_text("[]", encoding="utf-8")
@@ -88,6 +99,99 @@ def append_history(entry: dict) -> None:
     history = read_history()
     history.insert(0, entry)
     write_history(history[:60])
+
+
+def get_thumbnail_filename(item_id: str) -> str:
+    return f"{safe_name(item_id)}.jpg"
+
+
+def get_thumbnail_path(item_id: str) -> Path:
+    return THUMB_DIR / get_thumbnail_filename(item_id)
+
+
+def get_thumbnail_url(item_id: str) -> str:
+    return f"/generated/thumbs/{get_thumbnail_filename(item_id)}"
+
+
+def resolve_generated_path(image_url: str) -> Optional[Path]:
+    if not isinstance(image_url, str) or not image_url.startswith("/generated/"):
+        return None
+    relative = image_url.removeprefix("/generated/")
+    target = (GENERATED_DIR / relative).resolve()
+    try:
+        target.relative_to(GENERATED_DIR.resolve())
+    except ValueError:
+        return None
+    return target
+
+
+def build_thumbnail(source_path: Path, thumb_path: Path) -> None:
+    if Image is None:
+        raise RuntimeError("缺少 Pillow 依赖，无法生成缩略图。")
+
+    thumb_path.parent.mkdir(parents=True, exist_ok=True)
+    with Image.open(source_path) as image:
+        if image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info):
+            alpha = image.convert("RGBA")
+            background = Image.new("RGB", alpha.size, (255, 255, 255))
+            background.paste(alpha, mask=alpha.getchannel("A"))
+            image = background
+        else:
+            image = image.convert("RGB")
+
+        resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+        image.thumbnail((THUMB_MAX_EDGE, THUMB_MAX_EDGE), resample=resample)
+        image.save(
+            thumb_path,
+            format="JPEG",
+            quality=THUMB_JPEG_QUALITY,
+            optimize=True,
+            progressive=True,
+        )
+
+
+def ensure_thumbnail_for_history_entry(entry: dict) -> Tuple[dict, bool]:
+    if not isinstance(entry, dict):
+        return entry, False
+
+    item_id = str(entry.get("id", "")).strip()
+    if not item_id:
+        return entry, False
+
+    source_path = resolve_generated_path(str(entry.get("imageUrl", "")))
+    if not source_path or not source_path.exists() or not source_path.is_file():
+        return entry, False
+
+    thumb_path = get_thumbnail_path(item_id)
+    if not thumb_path.exists():
+        build_thumbnail(source_path, thumb_path)
+
+    thumb_url = get_thumbnail_url(item_id)
+    if entry.get("thumbUrl") == thumb_url:
+        return entry, False
+
+    patched = dict(entry)
+    patched["thumbUrl"] = thumb_url
+    return patched, True
+
+
+def read_history_with_thumbnails() -> List[dict]:
+    history = read_history()
+    changed = False
+    result: List[dict] = []
+
+    for item in history:
+        try:
+            patched, item_changed = ensure_thumbnail_for_history_entry(item)
+        except Exception:
+            patched, item_changed = item, False
+        result.append(patched)
+        if item_changed:
+            changed = True
+
+    if changed:
+        write_history(result)
+    return result
 
 
 def delete_history_item(item_id: str) -> Optional[dict]:
@@ -410,6 +514,18 @@ def slugify_name(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]+", "-", value).strip("-").lower() or "persona"
 
 
+def normalize_persona_filename(filename: str) -> str:
+    basename = str(filename or "").strip().replace("\\", "/").split("/")[-1]
+    stem, suffix = os.path.splitext(basename)
+    safe_stem = re.sub(r"[^\w\u4e00-\u9fff-]+", "-", stem, flags=re.UNICODE).strip(" .-_")
+    if not safe_stem:
+        safe_stem = "persona"
+    safe_suffix = suffix or ".md"
+    if safe_suffix.lower() != ".md":
+        safe_suffix = ".md"
+    return f"{safe_stem}{safe_suffix}"
+
+
 def parse_persona_markdown(path: Path) -> Optional[dict]:
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -426,7 +542,7 @@ def parse_persona_markdown(path: Path) -> Optional[dict]:
         return None
 
     return {
-        "id": slugify_name(path.stem),
+        "id": path.name,
         "name": name,
         "summary": summary,
         "content": content,
@@ -448,21 +564,26 @@ def read_prompt_personas() -> List[dict]:
 
 
 def get_prompt_persona(persona_id: str) -> Optional[dict]:
-    target = persona_id.strip().lower()
-    if not target:
+    target_path = get_prompt_persona_path(persona_id)
+    if not target_path:
         return None
-    for persona in read_prompt_personas():
-        if persona["id"] == target:
-            return persona
-    return None
+    return parse_persona_markdown(target_path)
 
 
 def get_prompt_persona_path(persona_id: str) -> Optional[Path]:
-    target = persona_id.strip().lower()
+    target = unquote(persona_id).strip()
     if not target:
         return None
+    if "/" in target or "\\" in target or ".." in target:
+        return None
+
+    direct = PERSONAS_DIR / target
+    if direct.exists() and direct.is_file() and direct.suffix.lower() == ".md":
+        return direct
+
+    lowered = target.lower()
     for path in sorted(PERSONAS_DIR.glob("*.md")):
-        if slugify_name(path.stem) == target:
+        if path.name.lower() == lowered or slugify_name(path.stem) == lowered:
             return path
     return None
 
@@ -471,9 +592,7 @@ def validate_persona_payload(payload: dict) -> Tuple[Optional[str], Optional[str
     name = str(payload.get("name", "")).strip()
     summary = str(payload.get("summary", "")).strip()
     content = str(payload.get("content", "")).strip()
-    filename = safe_name(str(payload.get("filename", "")).strip() or "persona.md")
-    if not filename.lower().endswith(".md"):
-        filename = f"{filename}.md"
+    filename = normalize_persona_filename(str(payload.get("filename", "")).strip() or "persona.md")
     if not name or not summary or not content:
         return None, None, None, "人设名称、简介和内容都不能为空。"
     return name, summary, content, filename
@@ -501,9 +620,21 @@ def update_prompt_persona(persona_id: str, payload: dict) -> Tuple[Optional[dict
     if not target:
         return None, "未找到对应的人设文件。"
 
-    name, summary, content, error = validate_persona_payload(payload)
+    name, summary, content, filename_or_error = validate_persona_payload(payload)
+    error = filename_or_error if not (name and summary and content) else None
     if error:
         return None, error
+
+    next_filename = filename_or_error or target.name
+    next_target = PERSONAS_DIR / next_filename
+    if next_target.resolve() != target.resolve():
+        if next_target.exists():
+            return None, "目标文件名已存在，请换一个文件名。"
+        try:
+            target.rename(next_target)
+            target = next_target
+        except OSError as exc:
+            return None, f"重命名文件失败：{exc}"
 
     target.write_text(build_persona_markdown(name, summary, content), encoding="utf-8")
     persona = parse_persona_markdown(target)
@@ -619,7 +750,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 return
-            body = json.dumps({"items": read_history()}, ensure_ascii=False).encode("utf-8")
+            body = json.dumps({"items": read_history_with_thumbnails()}, ensure_ascii=False).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -702,7 +833,10 @@ class AppHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/history":
             if not self.ensure_authenticated():
                 return
-            history = read_history()
+            try:
+                history = read_history_with_thumbnails()
+            except RuntimeError as exc:
+                return json_response(self, 500, {"error": str(exc)})
             return json_response(self, 200, {"items": history})
 
         if parsed.path.startswith("/generated/"):
@@ -728,6 +862,11 @@ class AppHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/auth/logout":
             return self.handle_logout()
+
+        if parsed.path == "/api/history/download-zip":
+            if not self.ensure_authenticated():
+                return
+            return self.handle_download_history_zip()
 
         if parsed.path == "/api/generate":
             if not self.ensure_authenticated():
@@ -856,6 +995,13 @@ class AppHandler(BaseHTTPRequestHandler):
         api_key = get_setting("BANANA_PRO_API_KEY")
         api_url = get_setting("BANANA_PRO_API_URL", DEFAULT_API_URL)
 
+        if Image is None:
+            return json_response(
+                self,
+                500,
+                {"error": "缺少 Pillow 依赖，无法生成历史缩略图，请先安装 Pillow。"},
+            )
+
         if not api_key:
             return json_response(
                 self,
@@ -947,6 +1093,24 @@ class AppHandler(BaseHTTPRequestHandler):
         filename = f"{file_id}{extension_for_mime(mime_type)}"
         output_path = GENERATED_DIR / filename
         output_path.write_bytes(image_bytes)
+        thumb_path = get_thumbnail_path(file_id)
+
+        try:
+            build_thumbnail(output_path, thumb_path)
+        except Exception as exc:
+            try:
+                if output_path.exists():
+                    output_path.unlink()
+            except OSError:
+                pass
+            return json_response(
+                self,
+                500,
+                {
+                    "error": "结果图已生成，但缩略图创建失败。",
+                    "details": str(exc),
+                },
+            )
 
         entry = {
             "id": file_id,
@@ -960,6 +1124,7 @@ class AppHandler(BaseHTTPRequestHandler):
             "baseImageName": base_upload["filename"],
             "referenceCount": len(ref_uploads),
             "imageUrl": f"/generated/{filename}",
+            "thumbUrl": get_thumbnail_url(file_id),
             "downloadName": f"banana-pro-{file_id}{extension_for_mime(mime_type)}",
             "message": message,
         }
@@ -1105,16 +1270,102 @@ class AppHandler(BaseHTTPRequestHandler):
         if removed is None:
             return json_response(self, 404, {"error": "未找到对应的历史记录。"})
 
-        image_url = removed.get("imageUrl", "")
-        if isinstance(image_url, str) and image_url.startswith("/generated/"):
-            target = GENERATED_DIR / image_url.removeprefix("/generated/")
+        image_target = resolve_generated_path(str(removed.get("imageUrl", "")))
+        if image_target:
             try:
-                if target.exists():
-                    target.unlink()
+                if image_target.exists():
+                    image_target.unlink()
             except OSError:
                 pass
 
+        thumb_target = resolve_generated_path(str(removed.get("thumbUrl", ""))) or get_thumbnail_path(item_id)
+        try:
+            if thumb_target and thumb_target.exists():
+                thumb_target.unlink()
+        except OSError:
+            pass
+
         json_response(self, 200, {"ok": True, "id": item_id})
+
+    def handle_download_history_zip(self) -> None:
+        try:
+            payload = self.read_json_body()
+        except Exception:
+            return json_response(self, 400, {"error": "请求格式不正确。"})
+
+        raw_ids = payload.get("ids")
+        if not isinstance(raw_ids, list):
+            return json_response(self, 400, {"error": "缺少要下载的图片 id 列表。"})
+
+        selected_ids: List[str] = []
+        for item in raw_ids:
+            item_id = str(item).strip()
+            if item_id and item_id not in selected_ids:
+                selected_ids.append(item_id)
+
+        if not selected_ids:
+            return json_response(self, 400, {"error": "请至少选择一张图片。"})
+
+        history_map = {
+            str(entry.get("id")): entry
+            for entry in read_history()
+            if isinstance(entry, dict) and entry.get("id")
+        }
+        selected_entries = [history_map[item_id] for item_id in selected_ids if item_id in history_map]
+        if not selected_entries:
+            return json_response(self, 404, {"error": "未找到所选历史记录。"})
+
+        generated_root = GENERATED_DIR.resolve()
+        zip_buffer = io.BytesIO()
+        used_names: Dict[str, int] = {}
+        added_count = 0
+
+        with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for entry in selected_entries:
+                image_url = entry.get("imageUrl", "")
+                if not isinstance(image_url, str) or not image_url.startswith("/generated/"):
+                    continue
+
+                relative = image_url.removeprefix("/generated/")
+                target = (GENERATED_DIR / relative).resolve()
+
+                try:
+                    target.relative_to(generated_root)
+                except ValueError:
+                    continue
+
+                if not target.exists() or not target.is_file():
+                    continue
+
+                preferred_name = str(entry.get("downloadName", "")).strip() or target.name
+                safe_filename = safe_name(preferred_name) or target.name
+                stem = Path(safe_filename).stem or "banana-pro-image"
+                suffix = Path(safe_filename).suffix or target.suffix or ".png"
+
+                key = f"{stem}{suffix}"
+                duplicate_count = used_names.get(key, 0)
+                used_names[key] = duplicate_count + 1
+                archive_name = key if duplicate_count == 0 else f"{stem}-{duplicate_count}{suffix}"
+
+                archive.write(target, arcname=archive_name)
+                added_count += 1
+
+        if added_count == 0:
+            return json_response(self, 404, {"error": "所选图片文件不存在或无法读取。"})
+
+        body = zip_buffer.getvalue()
+        zip_name = f"banana-pro-history-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
+        encoded_filename = quote(zip_name)
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header(
+            "Content-Disposition",
+            f"attachment; filename=\"{zip_name}\"; filename*=UTF-8''{encoded_filename}",
+        )
+        self.end_headers()
+        self.wfile.write(body)
 
     def handle_delete_prompt_persona(self, persona_id: str) -> None:
         if not delete_prompt_persona(persona_id):

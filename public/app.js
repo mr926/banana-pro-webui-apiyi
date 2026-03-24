@@ -39,7 +39,9 @@ const closePromptPersonaModalButton = document.getElementById("close-prompt-pers
 const promptPersonaFileInput = document.getElementById("prompt-persona-file");
 const uploadPromptPersonaButton = document.getElementById("upload-prompt-persona-button");
 const promptPersonaList = document.getElementById("prompt-persona-list");
+const createPromptPersonaButton = document.getElementById("create-prompt-persona-button");
 const promptPersonaFilename = document.getElementById("prompt-persona-filename");
+const promptPersonaFilenameInput = document.getElementById("prompt-persona-filename-input");
 const promptPersonaNameInput = document.getElementById("prompt-persona-name-input");
 const promptPersonaSummaryInput = document.getElementById("prompt-persona-summary-input");
 const promptPersonaContentInput = document.getElementById("prompt-persona-content-input");
@@ -66,6 +68,7 @@ const state = {
   selectedPromptPersonaId: "",
   editingPromptPersonaId: "",
   editingPromptPersonaFilename: "",
+  creatingPromptPersona: false,
   optimizedPrompt: "",
   optimizingPrompt: false,
 };
@@ -91,6 +94,7 @@ const BASE_IMAGE_MAX_BYTES = 4 * MB;
 const BASE_IMAGE_MAX_LONG_EDGE = 4000;
 const BASE_IMAGE_QUALITY = 0.85;
 const REFERENCE_IMAGE_MAX_BYTES = 2 * MB;
+const HISTORY_PREVIEW_LIMIT = 6;
 
 function revokePreviewUrls(container) {
   container.querySelectorAll("[data-object-url]").forEach((img) => {
@@ -357,15 +361,65 @@ function setModalVisible(modal, visible) {
   modal.setAttribute("aria-hidden", String(!visible));
 }
 
+function normalizePersonaFilename(value) {
+  const raw = String(value || "").trim().replace(/\\/g, "/").split("/").pop() || "";
+  const withoutExt = raw.replace(/\.md$/i, "").trim();
+  const safeStem = withoutExt.replace(/[^\w\u4e00-\u9fff-]+/g, "-").replace(/^-+|-+$/g, "");
+  const finalStem = safeStem || "persona";
+  return `${finalStem}.md`;
+}
+
+function syncPromptPersonaEditorState() {
+  if (state.creatingPromptPersona) {
+    if (promptPersonaFilename) promptPersonaFilename.textContent = "新建中";
+    if (savePromptPersonaButton) {
+      savePromptPersonaButton.disabled = false;
+      savePromptPersonaButton.textContent = "创建人格";
+    }
+    if (deletePromptPersonaButton) deletePromptPersonaButton.disabled = true;
+    return;
+  }
+
+  if (savePromptPersonaButton) {
+    savePromptPersonaButton.disabled = !state.editingPromptPersonaId;
+    savePromptPersonaButton.textContent = "保存修改";
+  }
+  if (deletePromptPersonaButton) deletePromptPersonaButton.disabled = !state.editingPromptPersonaId;
+}
+
 function resetPromptPersonaEditor() {
+  state.creatingPromptPersona = false;
   state.editingPromptPersonaId = "";
   state.editingPromptPersonaFilename = "";
   if (promptPersonaFilename) promptPersonaFilename.textContent = "未选择";
+  if (promptPersonaFilenameInput) promptPersonaFilenameInput.value = "";
   if (promptPersonaNameInput) promptPersonaNameInput.value = "";
   if (promptPersonaSummaryInput) promptPersonaSummaryInput.value = "";
   if (promptPersonaContentInput) promptPersonaContentInput.value = "";
-  if (savePromptPersonaButton) savePromptPersonaButton.disabled = true;
-  if (deletePromptPersonaButton) deletePromptPersonaButton.disabled = true;
+  syncPromptPersonaEditorState();
+}
+
+function prepareNewPromptPersona() {
+  state.creatingPromptPersona = true;
+  state.editingPromptPersonaId = "";
+  state.editingPromptPersonaFilename = "";
+  if (promptPersonaFilenameInput && !promptPersonaFilenameInput.value.trim()) {
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    promptPersonaFilenameInput.value = `persona-${stamp}.md`;
+  }
+  if (promptPersonaFilename) promptPersonaFilename.textContent = "新建中";
+  if (promptPersonaNameInput && !promptPersonaNameInput.value.trim()) {
+    promptPersonaNameInput.value = "新建人格";
+  }
+  if (promptPersonaSummaryInput && !promptPersonaSummaryInput.value.trim()) {
+    promptPersonaSummaryInput.value = "请填写一句人格简介";
+  }
+  if (promptPersonaContentInput && !promptPersonaContentInput.value.trim()) {
+    promptPersonaContentInput.value = "你是一个擅长将中文图像需求转写为高质量英文提示词的助手。";
+  }
+  syncPromptPersonaEditorState();
+  promptPersonaFilenameInput?.focus();
+  renderPromptPersonaManagerList();
 }
 
 function renderPromptPersonaManagerList() {
@@ -381,7 +435,7 @@ function renderPromptPersonaManagerList() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "persona-item";
-    if (persona.id === state.editingPromptPersonaId) {
+    if (!state.creatingPromptPersona && persona.id === state.editingPromptPersonaId) {
       button.classList.add("active");
     }
 
@@ -473,8 +527,16 @@ async function loadPromptPersonas() {
 
     const payload = await readJsonSafely(response);
     state.promptPersonas = Array.isArray(payload.items) ? payload.items : [];
-    if (!state.selectedPromptPersonaId && state.promptPersonas[0]) {
-      state.selectedPromptPersonaId = state.promptPersonas[0].id;
+    const selectedExists = state.promptPersonas.some((persona) => persona.id === state.selectedPromptPersonaId);
+    if (!selectedExists) {
+      state.selectedPromptPersonaId = state.promptPersonas[0]?.id || "";
+    }
+    const editingExists = state.promptPersonas.some((persona) => persona.id === state.editingPromptPersonaId);
+    if (!editingExists) {
+      state.editingPromptPersonaId = "";
+      if (!state.creatingPromptPersona) {
+        state.editingPromptPersonaFilename = "";
+      }
     }
     renderPromptPersonaOptions();
     renderPromptPersonaManagerList();
@@ -494,14 +556,17 @@ async function loadPromptPersonaDetail(personaId) {
     throw new Error(payload.error || "加载人设详情失败");
   }
 
+  state.creatingPromptPersona = false;
   state.editingPromptPersonaId = payload.id || personaId;
   state.editingPromptPersonaFilename = payload.filename || "";
   promptPersonaFilename.textContent = payload.filename || "未命名";
+  if (promptPersonaFilenameInput) {
+    promptPersonaFilenameInput.value = payload.filename || "";
+  }
   promptPersonaNameInput.value = payload.name || "";
   promptPersonaSummaryInput.value = payload.summary || "";
   promptPersonaContentInput.value = payload.content || "";
-  savePromptPersonaButton.disabled = false;
-  deletePromptPersonaButton.disabled = false;
+  syncPromptPersonaEditorState();
   renderPromptPersonaManagerList();
 }
 
@@ -532,6 +597,7 @@ function openPromptPersonaModal() {
       }
     } else {
       resetPromptPersonaEditor();
+      prepareNewPromptPersona();
     }
   })();
 }
@@ -934,14 +1000,15 @@ function finishOptimizeProgress(message = "优化完成") {
 }
 
 function renderHistory(items) {
+  const latestItems = Array.isArray(items) ? items.slice(0, HISTORY_PREVIEW_LIMIT) : [];
   historyList.innerHTML = "";
 
-  if (!items || items.length === 0) {
+  if (latestItems.length === 0) {
     historyList.innerHTML = `<div class="empty-history">还没有历史记录，先生成第一张吧。</div>`;
     return;
   }
 
-  items.forEach((entry) => {
+  latestItems.forEach((entry) => {
     const node = historyTemplate.content.firstElementChild.cloneNode(true);
     const img = node.querySelector(".history-image");
     const time = node.querySelector(".history-time");
@@ -951,8 +1018,10 @@ function renderHistory(items) {
     const downloadLink = node.querySelector(".history-download");
     const deleteButton = node.querySelector(".history-delete");
 
-    img.src = entry.imageUrl;
+    img.src = entry.thumbUrl || "";
     img.alt = entry.prompt || "历史图片";
+    img.loading = "lazy";
+    img.decoding = "async";
     time.textContent = formatDate(entry.createdAt);
     tags.textContent = `${entry.aspectRatio} · ${entry.imageSize}`;
     prompt.textContent = entry.prompt || "未填写提示词";
@@ -1064,20 +1133,45 @@ async function uploadPromptPersonaFile() {
   }
 }
 
-async function saveEditingPromptPersona() {
-  if (!state.editingPromptPersonaId) {
-    throw new Error("请先选择一个要编辑的人设。");
+function collectPromptPersonaEditorPayload() {
+  return {
+    filename: normalizePersonaFilename(promptPersonaFilenameInput?.value || state.editingPromptPersonaFilename || "persona.md"),
+    name: (promptPersonaNameInput?.value || "").trim(),
+    summary: (promptPersonaSummaryInput?.value || "").trim(),
+    content: (promptPersonaContentInput?.value || "").trim(),
+  };
+}
+
+async function createPromptPersonaFromEditor() {
+  const payload = collectPromptPersonaEditorPayload();
+  const response = await fetch("/api/prompt-personas", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const body = await readJsonSafely(response);
+  if (!response.ok) {
+    throw new Error(body.error || "新建人设失败");
+  }
+  return body;
+}
+
+async function savePromptPersonaFromEditor() {
+  if (state.creatingPromptPersona || !state.editingPromptPersonaId) {
+    const created = await createPromptPersonaFromEditor();
+    await loadPromptPersonas();
+    if (created.item?.id) {
+      state.selectedPromptPersonaId = created.item.id;
+      await loadPromptPersonaDetail(created.item.id);
+      renderPromptPersonaOptions();
+    }
+    return { mode: "create", item: created.item };
   }
 
   const response = await fetch(`/api/prompt-personas/${encodeURIComponent(state.editingPromptPersonaId)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      filename: state.editingPromptPersonaFilename,
-      name: promptPersonaNameInput?.value || "",
-      summary: promptPersonaSummaryInput?.value || "",
-      content: promptPersonaContentInput?.value || "",
-    }),
+    body: JSON.stringify(collectPromptPersonaEditorPayload()),
   });
   const payload = await readJsonSafely(response);
   if (!response.ok) {
@@ -1090,6 +1184,7 @@ async function saveEditingPromptPersona() {
     await loadPromptPersonaDetail(payload.item.id);
     renderPromptPersonaOptions();
   }
+  return { mode: "update", item: payload.item };
 }
 
 async function deleteEditingPromptPersona() {
@@ -1111,9 +1206,11 @@ async function deleteEditingPromptPersona() {
       await loadPromptPersonaDetail(state.selectedPromptPersonaId);
     } catch (error) {
       resetPromptPersonaEditor();
+      prepareNewPromptPersona();
     }
   } else {
     resetPromptPersonaEditor();
+    prepareNewPromptPersona();
   }
 }
 
@@ -1389,10 +1486,20 @@ uploadPromptPersonaButton?.addEventListener("click", async () => {
   }
 });
 
+createPromptPersonaButton?.addEventListener("click", () => {
+  prepareNewPromptPersona();
+  setPromptPersonaModalStatus("已切换到新建模式，填写后点击“创建人格”。");
+});
+
+promptPersonaFilenameInput?.addEventListener("blur", () => {
+  if (!promptPersonaFilenameInput.value.trim()) return;
+  promptPersonaFilenameInput.value = normalizePersonaFilename(promptPersonaFilenameInput.value);
+});
+
 savePromptPersonaButton?.addEventListener("click", async () => {
   try {
-    await saveEditingPromptPersona();
-    setPromptPersonaModalStatus("人设已保存。");
+    const result = await savePromptPersonaFromEditor();
+    setPromptPersonaModalStatus(result.mode === "create" ? "人设新建成功。" : "人设已保存。");
     setOptimizeStatus("");
   } catch (error) {
     const message = error instanceof Error ? error.message : "保存人设失败";
