@@ -45,6 +45,7 @@ python3 server.py
 - `BANANA_PRO_API_KEY`
 - `BANANA_PRO_LLM_API_KEY`
 - `BANANA_PRO_LLM_API_URL`
+- `BANANA_PRO_LLM_MODEL`
 - `BANANA_PRO_HOST`
 - `BANANA_PRO_PORT`
 
@@ -53,6 +54,7 @@ python3 server.py
 如果设置了 `BANANA_PRO_UI_PASSWORD`，页面会先要求输入访问密码；不设置则保持无密码访问。
 如果设置了 `BANANA_PRO_LLM_API_KEY`，AI 翻译优化会优先使用它；未设置时会回退到 `BANANA_PRO_API_KEY`。
 `BANANA_PRO_LLM_API_URL` 用于单独配置提示词优化所使用的 LLM 接口地址，默认值为 `https://api.apiyi.com/v1/chat/completions`。
+`BANANA_PRO_LLM_MODEL` 用于单独配置提示词优化所使用的模型名，默认值为 `gpt-5.4`。
 
 推荐先复制示例文件：
 
@@ -68,6 +70,7 @@ BANANA_PRO_UI_PASSWORD=
 BANANA_PRO_API_KEY=
 BANANA_PRO_LLM_API_KEY=
 BANANA_PRO_LLM_API_URL=https://api.apiyi.com/v1/chat/completions
+BANANA_PRO_LLM_MODEL=gpt-5.4
 BANANA_PRO_HOST=127.0.0.1
 BANANA_PRO_PORT=8787
 ```
@@ -112,6 +115,7 @@ BANANA_PRO_PORT=8787
 ```bash
 export BANANA_PRO_LLM_API_KEY="你的_llm_api_key"
 export BANANA_PRO_LLM_API_URL="https://api.apiyi.com/v1/chat/completions"
+export BANANA_PRO_LLM_MODEL="gpt-5.4"
 export BANANA_PRO_API_KEY="你的_api_key"
 export BANANA_PRO_API_URL="https://api.apiyi.com/v1beta/models/gemini-3-pro-image-preview:generateContent"
 export BANANA_PRO_UI_PASSWORD=""
@@ -126,7 +130,7 @@ docker compose up -d --build
 cp .env.docker.example .env.docker
 ```
 
-然后把 `.env.docker` 里的 `BANANA_PRO_API_KEY`、`BANANA_PRO_LLM_API_KEY` 和 `BANANA_PRO_LLM_API_URL` 按需改成你自己的；如果不需要访问密码，可以保持 `BANANA_PRO_UI_PASSWORD=` 为空。再启动：
+然后把 `.env.docker` 里的 `BANANA_PRO_API_KEY`、`BANANA_PRO_LLM_API_KEY`、`BANANA_PRO_LLM_API_URL` 和 `BANANA_PRO_LLM_MODEL` 按需改成你自己的；如果不需要访问密码，可以保持 `BANANA_PRO_UI_PASSWORD=` 为空。再启动：
 
 ```bash
 docker compose --env-file .env.docker up -d --build
@@ -152,6 +156,7 @@ docker run -d \
   -e BANANA_PRO_API_KEY="你的_api_key" \
   -e BANANA_PRO_LLM_API_KEY="你的_llm_api_key" \
   -e BANANA_PRO_LLM_API_URL="https://api.apiyi.com/v1/chat/completions" \
+  -e BANANA_PRO_LLM_MODEL="gpt-5.4" \
   -e BANANA_PRO_API_URL="https://api.apiyi.com/v1beta/models/gemini-3-pro-image-preview:generateContent" \
   -e BANANA_PRO_UI_PASSWORD="" \
   -e BANANA_PRO_HOST="0.0.0.0" \
