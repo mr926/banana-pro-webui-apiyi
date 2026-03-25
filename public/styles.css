@@ -66,6 +66,7 @@ select {
   top: 16px;
   overflow: auto;
   padding-right: 4px;
+  padding-bottom: 72px;
 }
 
 .result-panel {
@@ -667,6 +668,15 @@ textarea {
 .auth-card .primary-button,
 .optimize-button {
   width: 100%;
+}
+
+#submit-button {
+  position: fixed;
+  left: max(16px, calc((100vw - 1500px) / 2 + 16px));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  width: min(370px, calc(100vw - 32px));
+  z-index: 30;
+  box-shadow: 0 10px 24px rgba(28, 58, 104, 0.2);
 }
 
 .ghost-button {
@@ -1271,6 +1281,12 @@ button:focus-visible,
 
   .result-panel {
     grid-template-rows: auto auto;
+  }
+
+  #submit-button {
+    left: 12px;
+    bottom: max(12px, env(safe-area-inset-bottom));
+    width: calc(100vw - 24px);
   }
 }
 
