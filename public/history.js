@@ -8,6 +8,7 @@ const albumSelectAllButton = document.getElementById("album-select-all");
 const albumClearSelectionButton = document.getElementById("album-clear-selection");
 const albumDownloadSelectedButton = document.getElementById("album-download-selected");
 const albumSelectionStatus = document.getElementById("album-selection-status");
+const IMAGE_TRANSFER_QUEUE_KEY = "banana-pro-image-transfer-queue";
 
 const albumState = {
   items: [],
@@ -58,6 +59,85 @@ async function deleteAlbumItem(id) {
   const payload = await readJsonSafely(response);
   if (!response.ok) {
     throw new Error(payload.error || "删除失败");
+  }
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+  if (!copied) {
+    throw new Error("浏览器不支持复制，请手动复制。");
+  }
+}
+
+async function copyPrompt(button, prompt) {
+  const fullPrompt = String(prompt || "").trim();
+  if (!fullPrompt) {
+    alert("当前记录没有可复制的提示词。");
+    return;
+  }
+
+  try {
+    await copyTextToClipboard(fullPrompt);
+    const originalText = button.textContent;
+    button.textContent = "已复制";
+    button.disabled = true;
+    window.setTimeout(() => {
+      button.textContent = originalText;
+      button.disabled = false;
+    }, 1200);
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "复制失败，请重试。");
+  }
+}
+
+function readImageTransferQueue() {
+  try {
+    const raw = localStorage.getItem(IMAGE_TRANSFER_QUEUE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function enqueueImageTransfer(entry, target) {
+  const imageUrl = String(entry?.imageUrl || "").trim();
+  if (!imageUrl) {
+    throw new Error("图片地址无效，无法发送。");
+  }
+
+  const queue = readImageTransferQueue();
+  queue.push({
+    target: target === "base" ? "base" : "reference",
+    imageUrl,
+    downloadName: entry.downloadName || "",
+    createdAt: Date.now(),
+  });
+  localStorage.setItem(IMAGE_TRANSFER_QUEUE_KEY, JSON.stringify(queue));
+}
+
+function sendImageToWorkbench(entry, target) {
+  try {
+    enqueueImageTransfer(entry, target);
+    window.location.href = "/";
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "发送失败，请重试。");
   }
 }
 
@@ -188,6 +268,9 @@ function renderAlbum(items) {
     const node = albumTemplate.content.firstElementChild.cloneNode(true);
     const image = node.querySelector(".album-image");
     const selector = node.querySelector(".album-select");
+    const copyButton = node.querySelector(".album-copy");
+    const sendBaseButton = node.querySelector(".album-send-base");
+    const sendReferenceButton = node.querySelector(".album-send-reference");
     const hasValidId = typeof entry.id === "string" && entry.id;
     image.src = entry.thumbUrl || "";
     image.alt = entry.prompt || "历史相册图片";
@@ -210,6 +293,15 @@ function renderAlbum(items) {
     node.querySelector(".album-open").href = entry.imageUrl;
     node.querySelector(".album-download").href = entry.imageUrl;
     node.querySelector(".album-download").download = entry.downloadName || "banana-pro-image";
+    copyButton?.addEventListener("click", async () => {
+      await copyPrompt(copyButton, entry.prompt);
+    });
+    sendBaseButton?.addEventListener("click", () => {
+      sendImageToWorkbench(entry, "base");
+    });
+    sendReferenceButton?.addEventListener("click", () => {
+      sendImageToWorkbench(entry, "reference");
+    });
     node.querySelector(".album-delete").addEventListener("click", async () => {
       try {
         await deleteAlbumItem(entry.id);
