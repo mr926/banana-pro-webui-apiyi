@@ -38,6 +38,7 @@ ENV_FILE = ROOT_DIR / ".env"
 DEFAULT_API_URL = "https://api.apiyi.com/v1beta/models/gemini-3-pro-image-preview:generateContent"
 DEFAULT_PROMPT_OPTIMIZER_BASE_URL = "https://api.apiyi.com/v1"
 DEFAULT_PROMPT_OPTIMIZER_URL = "https://api.apiyi.com/v1/chat/completions"
+DEFAULT_PROMPT_OPTIMIZER_MODEL = "gpt-5.4"
 DEFAULT_PORT = 8787
 TIMEOUT_MAP = {"1K": 180, "2K": 300, "4K": 360}
 PROMPT_OPTIMIZER_TIMEOUT = 90
@@ -661,10 +662,10 @@ def build_prompt_optimizer_url(base_url: str) -> str:
     return normalized + "/chat/completions"
 
 
-def build_prompt_optimizer_payload(user_prompt: str, persona_content: str) -> dict:
+def build_prompt_optimizer_payload(user_prompt: str, persona_content: str, model: str) -> dict:
     source_text = user_prompt.strip()
     return {
-        "model": "gpt-5.4",
+        "model": model,
         "messages": [
             {
                 "role": "system",
@@ -1177,6 +1178,7 @@ class AppHandler(BaseHTTPRequestHandler):
     def handle_optimize_prompt(self) -> None:
         api_key = get_setting("BANANA_PRO_LLM_API_KEY") or get_setting("BANANA_PRO_API_KEY")
         api_url = get_setting("BANANA_PRO_LLM_API_URL")
+        llm_model = get_setting("BANANA_PRO_LLM_MODEL", DEFAULT_PROMPT_OPTIMIZER_MODEL).strip() or DEFAULT_PROMPT_OPTIMIZER_MODEL
         if not api_url:
             legacy_base_url = get_setting("BANANA_PRO_LLM_API_BASE_URL", DEFAULT_PROMPT_OPTIMIZER_BASE_URL)
             api_url = build_prompt_optimizer_url(legacy_base_url)
@@ -1208,7 +1210,7 @@ class AppHandler(BaseHTTPRequestHandler):
         if not persona:
             return json_response(self, 400, {"error": "未找到对应的人设，请重新选择。"})
 
-        request_payload = build_prompt_optimizer_payload(prompt, persona["content"])
+        request_payload = build_prompt_optimizer_payload(prompt, persona["content"], llm_model)
         request_body = json.dumps(request_payload).encode("utf-8")
         request = urllib.request.Request(
             api_url,
@@ -1259,7 +1261,7 @@ class AppHandler(BaseHTTPRequestHandler):
             200,
             {
                 "prompt": optimized_prompt,
-                "model": "gpt-5.4",
+                "model": llm_model,
                 "personaId": persona["id"],
                 "personaName": persona["name"],
             },
