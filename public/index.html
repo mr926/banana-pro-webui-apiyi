@@ -9,7 +9,7 @@
   <body>
     <div class="page-shell">
       <aside class="control-panel">
-        <div class="brand-card">
+        <header class="brand-card">
           <div class="brand-topbar">
             <div>
               <div class="eyebrow">Banana Pro</div>
@@ -20,35 +20,37 @@
               <button type="button" id="logout-button" class="ghost-button hidden">退出</button>
             </div>
           </div>
-          <p>上传基础图和参考图，选择比例、清晰度与搜索增强后直接生成。</p>
-        </div>
+          <p>按「基础图 → 参数 → 提示词 → 生成」完成一次渲染。界面已简化为高频操作优先。</p>
+        </header>
 
         <form id="generate-form" class="panel-stack">
           <section class="panel-card">
-            <div class="section-head">
-              <h2>基础结构图（必填）</h2>
-              <p>上传一张主要约束图，默认会自动继承它的宽高比。</p>
+            <div class="section-head section-head-upload">
+              <div>
+                <h2>1. 基础结构图（必填）</h2>
+                <p>上传主约束图，比例默认自动继承。</p>
+              </div>
+              <label class="upload-mini" for="base-image" aria-label="上传基础图">
+                <input id="base-image" name="baseImage" type="file" accept="image/*" required />
+                <span aria-hidden="true">+</span>
+                <span class="sr-only">上传基础图</span>
+              </label>
             </div>
-            <label class="upload-box compact slim" for="base-image">
-              <input id="base-image" name="baseImage" type="file" accept="image/*" required />
-              <span class="upload-icon">+</span>
-              <strong>上传基础图</strong>
-              <span>支持 PNG、JPG、WEBP、GIF</span>
-            </label>
             <div id="base-preview" class="thumb-grid single"></div>
           </section>
 
           <section class="panel-card">
-            <div class="section-head">
-              <h2>风格参考图（可选）</h2>
-              <p>最多 6 张，用于借鉴材质、灯光、色彩和氛围。</p>
+            <div class="section-head section-head-upload">
+              <div>
+                <h2>2. 风格参考图（可选）</h2>
+                <p>最多 6 张，用于补充材质、光线和氛围。</p>
+              </div>
+              <label class="upload-mini" for="reference-images" aria-label="上传参考图">
+                <input id="reference-images" name="referenceImages" type="file" accept="image/*" multiple />
+                <span aria-hidden="true">+</span>
+                <span class="sr-only">上传参考图</span>
+              </label>
             </div>
-            <label class="upload-box compact slim" for="reference-images">
-              <input id="reference-images" name="referenceImages" type="file" accept="image/*" multiple />
-              <span class="upload-icon">+</span>
-              <strong>上传参考图</strong>
-              <span>最多 6 张</span>
-            </label>
             <div id="reference-preview" class="thumb-grid"></div>
           </section>
 
@@ -56,8 +58,8 @@
             <div class="setting-group">
               <div class="section-head narrow section-head-with-preview">
                 <div>
-                  <h2>图片比例</h2>
-                  <p>默认使用基础图比例，也可以手动覆盖。</p>
+                  <h2>3. 图片比例</h2>
+                  <p>推荐自动，必要时手动覆盖。</p>
                 </div>
                 <div class="ratio-orientation-preview" id="ratio-orientation-preview">
                   <div class="orientation-card" data-orientation="landscape">
@@ -105,30 +107,30 @@
             </div>
 
             <div class="setting-group">
-              <div class="section-head narrow">
+              <div class="size-inline-head">
                 <h2>生成大小</h2>
-                <p>可选 1K / 2K / 4K。</p>
+                <div class="segment-grid size-segment-grid">
+                  <label class="segment">
+                    <input type="radio" name="imageSize" value="1K" />
+                    <span>1K</span>
+                  </label>
+                  <label class="segment">
+                    <input type="radio" name="imageSize" value="2K" />
+                    <span>2K</span>
+                  </label>
+                  <label class="segment">
+                    <input type="radio" name="imageSize" value="4K" checked />
+                    <span>4K</span>
+                  </label>
+                </div>
               </div>
-              <div class="segment-grid">
-                <label class="segment">
-                  <input type="radio" name="imageSize" value="1K" />
-                  <span>1K</span>
-                </label>
-                <label class="segment">
-                  <input type="radio" name="imageSize" value="2K" />
-                  <span>2K</span>
-                </label>
-                <label class="segment">
-                  <input type="radio" name="imageSize" value="4K" checked />
-                  <span>4K</span>
-                </label>
-              </div>
+              <p class="inline-hint">越大越清晰，耗时通常更长。</p>
             </div>
 
             <label class="toggle-row">
               <div>
                 <strong>网络搜索增强</strong>
-                <p>需要时启用搜索能力，补充最新公开信息作为参考。</p>
+                <p>在需要补充公开信息时启用。</p>
               </div>
               <span class="switch">
                 <input type="checkbox" name="enableSearch" value="true" />
@@ -138,13 +140,13 @@
 
             <div class="setting-group">
               <div class="section-head narrow">
-                <h2>提示词</h2>
-                <p>描述你想要的风格、材质、光线、镜头语言和细节。</p>
+                <h2>4. 提示词</h2>
+                <p>描述希望保留的结构与想得到的风格细节。</p>
               </div>
               <div class="segment-grid prompt-mode-grid">
                 <label class="segment">
                   <input type="radio" name="promptMode" value="default" checked />
-                  <span>默认</span>
+                  <span>直接输入</span>
                 </label>
                 <label class="segment">
                   <input type="radio" name="promptMode" value="optimized" />
@@ -161,7 +163,7 @@
                 id="prompt"
                 name="prompt"
                 rows="4"
-                placeholder="例如：保留建筑结构关系，生成清晨自然光的现代建筑外立面效果图，浅灰石材与木饰面结合，氛围干净、克制、真实。"
+                placeholder="例如：保留建筑结构，生成清晨自然光的现代外立面效果图，浅灰石材与木饰面，氛围克制、真实。"
               ></textarea>
               <div id="optimized-prompt-panel" class="optimized-prompt-panel hidden">
                 <div class="persona-toolbar">
@@ -185,7 +187,7 @@
               </div>
             </div>
 
-            <button type="submit" id="submit-button" class="primary-button">生成渲染图</button>
+            <button type="submit" id="submit-button" class="primary-button">开始生成</button>
             <p id="form-status" class="form-status"></p>
           </section>
         </form>
@@ -205,7 +207,7 @@
             <div class="placeholder">
               <div class="placeholder-icon">▣</div>
               <h3>准备生成</h3>
-              <p>上传基础图并填写提示词后，就可以开始渲染。</p>
+              <p>完成左侧 4 个步骤后即可生成。</p>
             </div>
           </div>
         </section>
@@ -214,7 +216,7 @@
           <div class="preview-head">
             <div>
               <div class="eyebrow">History</div>
-              <h2>历史图片</h2>
+              <h2>最近历史</h2>
             </div>
             <button type="button" id="refresh-history" class="ghost-button">刷新</button>
           </div>
@@ -318,7 +320,7 @@
       <form id="login-form" class="auth-card">
         <div class="eyebrow">Protected</div>
         <h2>请输入访问密码</h2>
-        <p>密码来自服务端环境变量配置，验证通过后才会显示历史记录和生成接口。</p>
+        <p>验证通过后才会显示历史记录和生成能力。</p>
         <input id="password-input" class="auth-input" type="password" placeholder="请输入密码" autocomplete="current-password" />
         <button type="submit" class="primary-button">进入工作台</button>
         <p id="auth-status" class="form-status"></p>
@@ -339,7 +341,13 @@
 
     <template id="history-item-template">
       <article class="history-item">
-        <img class="history-image" alt="历史图片" />
+        <div class="history-image-wrap">
+          <img class="history-image" alt="历史图片" />
+          <div class="image-transfer-actions">
+            <button type="button" class="image-transfer-button history-send-base">基</button>
+            <button type="button" class="image-transfer-button history-send-reference">参</button>
+          </div>
+        </div>
         <div class="history-info">
           <div class="history-topline">
             <strong class="history-time"></strong>
@@ -349,6 +357,7 @@
           <div class="history-actions">
             <button type="button" class="history-view ghost-button">查看</button>
             <a class="history-download ghost-button" download>下载</a>
+            <button type="button" class="history-copy ghost-button">复制提示词</button>
             <button type="button" class="history-delete danger-button">删除</button>
           </div>
         </div>

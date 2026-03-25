@@ -12,7 +12,7 @@
         <div>
           <div class="eyebrow">Album</div>
           <h1>历史相册</h1>
-          <p>查看、下载和删除已经生成的图片。以下均为缩略图展示。</p>
+          <p>集中查看、批量选择和下载历史生成结果。</p>
         </div>
         <div class="brand-actions album-toolbar">
           <button type="button" id="album-select-all" class="ghost-button">全选</button>
@@ -45,7 +45,13 @@
           <input class="album-select" type="checkbox" />
           <span>选择</span>
         </label>
-        <img class="album-image" alt="历史相册图片" />
+        <div class="album-image-wrap">
+          <img class="album-image" alt="历史相册图片" />
+          <div class="image-transfer-actions">
+            <button type="button" class="image-transfer-button album-send-base">基</button>
+            <button type="button" class="image-transfer-button album-send-reference">参</button>
+          </div>
+        </div>
         <div class="album-info">
           <div class="album-meta">
             <strong class="album-time"></strong>
@@ -53,8 +59,9 @@
           </div>
           <p class="album-prompt"></p>
           <div class="album-actions">
-            <a class="ghost-button album-open" target="_blank" rel="noreferrer">查看原图</a>
+            <a class="ghost-button album-open" target="_blank" rel="noreferrer">查看</a>
             <a class="ghost-button album-download" download>下载</a>
+            <button type="button" class="ghost-button album-copy">复制</button>
             <button type="button" class="danger-button album-delete">删除</button>
           </div>
         </div>

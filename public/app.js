@@ -71,6 +71,7 @@ const state = {
   creatingPromptPersona: false,
   optimizedPrompt: "",
   optimizingPrompt: false,
+  titleFlashTimer: null,
 };
 
 const progressSteps = [
@@ -94,7 +95,10 @@ const BASE_IMAGE_MAX_BYTES = 4 * MB;
 const BASE_IMAGE_MAX_LONG_EDGE = 4000;
 const BASE_IMAGE_QUALITY = 0.85;
 const REFERENCE_IMAGE_MAX_BYTES = 2 * MB;
+const REFERENCE_IMAGE_LIMIT = 6;
 const HISTORY_PREVIEW_LIMIT = 6;
+const IMAGE_TRANSFER_QUEUE_KEY = "banana-pro-image-transfer-queue";
+const DEFAULT_PAGE_TITLE = document.title;
 
 function revokePreviewUrls(container) {
   container.querySelectorAll("[data-object-url]").forEach((img) => {
@@ -113,6 +117,104 @@ function formatFileSize(bytes) {
     return `${(bytes / MB).toFixed(2)} MB`;
   }
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+  if (!copied) {
+    throw new Error("浏览器不支持复制，请手动复制。");
+  }
+}
+
+async function copyPromptText(prompt, sourceLabel = "提示词") {
+  const fullPrompt = String(prompt || "").trim();
+  if (!fullPrompt) {
+    setStatus("当前记录没有可复制的提示词。", true);
+    return false;
+  }
+
+  try {
+    await copyTextToClipboard(fullPrompt);
+    setStatus(`${sourceLabel}已复制。`);
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "复制失败，请重试。";
+    setStatus(message, true);
+    return false;
+  }
+}
+
+function readImageTransferQueue() {
+  try {
+    const raw = localStorage.getItem(IMAGE_TRANSFER_QUEUE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function consumeImageTransferQueue() {
+  const queue = readImageTransferQueue();
+  try {
+    localStorage.removeItem(IMAGE_TRANSFER_QUEUE_KEY);
+  } catch (error) {
+    // Ignore storage cleanup errors and continue.
+  }
+  return queue;
+}
+
+function extFromMimeType(type) {
+  const normalized = String(type || "").toLowerCase();
+  if (normalized.includes("png")) return "png";
+  if (normalized.includes("webp")) return "webp";
+  if (normalized.includes("gif")) return "gif";
+  if (normalized.includes("bmp")) return "bmp";
+  if (normalized.includes("avif")) return "avif";
+  return "jpg";
+}
+
+function ensureImageFileName(name, mimeType, fallback = "history-image") {
+  const safe = String(name || fallback)
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "-");
+  const stem = safe.replace(/\.[a-z0-9]{2,6}$/i, "") || fallback;
+  const ext = /\.[a-z0-9]{2,6}$/i.test(safe) ? safe.match(/\.([a-z0-9]{2,6})$/i)?.[1] : extFromMimeType(mimeType);
+  return `${stem}.${ext || "jpg"}`;
+}
+
+async function fetchImageAsFile(imageUrl, preferredName = "history-image") {
+  const response = await fetch(imageUrl, { credentials: "include" });
+  if (!response.ok) {
+    throw new Error("读取历史图片失败，请稍后重试。");
+  }
+
+  const blob = await response.blob();
+  if (!blob.size) {
+    throw new Error("历史图片内容为空，无法发送。");
+  }
+
+  const fileName = ensureImageFileName(preferredName, blob.type, "history-image");
+  return new File([blob], fileName, {
+    type: blob.type || "image/jpeg",
+    lastModified: Date.now(),
+  });
 }
 
 function renameFileToJpg(name) {
@@ -295,6 +397,113 @@ function renderReferencePreview() {
       renderReferencePreview();
     },
   });
+}
+
+async function sendImageToBaseFromEntry(entry, options = {}) {
+  const { silent = false } = options;
+  if (!entry?.imageUrl) {
+    if (!silent) {
+      setStatus("图片地址无效，无法发送到基础结构图。", true);
+    }
+    return false;
+  }
+
+  try {
+    const sourceFile = await fetchImageAsFile(entry.imageUrl, entry.downloadName || "base-image");
+    const result = await compressBaseImageIfNeeded(sourceFile);
+    state.baseImageFile = result.file;
+    syncNativeInputFiles(baseInput, [result.file]);
+    baseInput.required = false;
+    renderBasePreview();
+    syncSubmitButtonState();
+    if (!silent) {
+      setStatus(result.compressed ? "已发送到基础结构图，并自动压缩完成。" : "已发送到基础结构图。");
+    }
+    return true;
+  } catch (error) {
+    if (!silent) {
+      const message = error instanceof Error ? error.message : "发送到基础结构图失败。";
+      setStatus(message, true);
+    }
+    return false;
+  }
+}
+
+async function sendImageToReferenceFromEntry(entry, options = {}) {
+  const { silent = false } = options;
+  if (!entry?.imageUrl) {
+    if (!silent) {
+      setStatus("图片地址无效，无法发送到风格参考图。", true);
+    }
+    return false;
+  }
+
+  if (state.referenceFiles.length >= REFERENCE_IMAGE_LIMIT) {
+    if (!silent) {
+      setStatus(`参考图最多 ${REFERENCE_IMAGE_LIMIT} 张，请先删除后再添加。`, true);
+    }
+    return false;
+  }
+
+  try {
+    const sourceFile = await fetchImageAsFile(entry.imageUrl, entry.downloadName || "reference-image");
+    const result = await compressReferenceImageIfNeeded(sourceFile);
+    state.referenceFiles = [...state.referenceFiles, result.file];
+    syncNativeInputFiles(referenceInput, state.referenceFiles);
+    renderReferencePreview();
+    syncSubmitButtonState();
+    if (!silent) {
+      setStatus(result.compressed ? "已发送到风格参考图，并自动压缩完成。" : "已发送到风格参考图。");
+    }
+    return true;
+  } catch (error) {
+    if (!silent) {
+      const message = error instanceof Error ? error.message : "发送到风格参考图失败。";
+      setStatus(message, true);
+    }
+    return false;
+  }
+}
+
+async function applyPendingImageTransfers() {
+  const queue = consumeImageTransferQueue();
+  if (!queue.length) {
+    return;
+  }
+
+  let baseCount = 0;
+  let referenceCount = 0;
+  let failedCount = 0;
+
+  for (const item of queue) {
+    const target = item?.target === "base" ? "base" : "reference";
+    const entry = {
+      imageUrl: item?.imageUrl || "",
+      downloadName: item?.downloadName || "history-image",
+    };
+    const success =
+      target === "base"
+        ? await sendImageToBaseFromEntry(entry, { silent: true })
+        : await sendImageToReferenceFromEntry(entry, { silent: true });
+
+    if (success) {
+      if (target === "base") {
+        baseCount += 1;
+      } else {
+        referenceCount += 1;
+      }
+    } else {
+      failedCount += 1;
+    }
+  }
+
+  const summary = [];
+  if (baseCount > 0) summary.push(`基础图 ${baseCount} 张`);
+  if (referenceCount > 0) summary.push(`参考图 ${referenceCount} 张`);
+  if (failedCount > 0) summary.push(`失败 ${failedCount} 张`);
+  if (summary.length) {
+    setStatus(`已从历史图片导入：${summary.join("，")}。`, failedCount > 0);
+  }
 }
 
 function setStatus(message, isError = false) {
@@ -723,6 +932,36 @@ async function sendBrowserNotification(title, body) {
   }
 }
 
+function stopTitleFlash(resetTitle = true) {
+  if (state.titleFlashTimer) {
+    clearInterval(state.titleFlashTimer);
+    state.titleFlashTimer = null;
+  }
+  if (resetTitle) {
+    document.title = DEFAULT_PAGE_TITLE;
+  }
+}
+
+function startTitleFlash(prefix) {
+  const text = String(prefix || "").trim();
+  if (!text) return;
+
+  stopTitleFlash(false);
+  const flashTitle = `${text} · ${DEFAULT_PAGE_TITLE}`;
+  const visibleAtStart = !document.hidden && document.hasFocus();
+  let tick = 0;
+
+  document.title = flashTitle;
+  state.titleFlashTimer = setInterval(() => {
+    tick += 1;
+    document.title = tick % 2 === 0 ? flashTitle : DEFAULT_PAGE_TITLE;
+
+    if (visibleAtStart && tick >= 8) {
+      stopTitleFlash();
+    }
+  }, 650);
+}
+
 function getAudioContext() {
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   if (!AudioCtx) return null;
@@ -859,10 +1098,14 @@ function renderCurrentResult(entry) {
     <div class="result-view">
       <div class="result-image-shell">
         <img class="result-image-original" src="${entry.imageUrl}" alt="生成结果" />
+        <div class="image-transfer-actions">
+          <button type="button" class="image-transfer-button" data-action="send-base">基础图</button>
+          <button type="button" class="image-transfer-button" data-action="send-reference">参考图</button>
+        </div>
       </div>
       <div class="result-actions">
-        <p>${entry.prompt ? entry.prompt : "未填写提示词"} </p>
         <div class="result-action-buttons">
+          <button type="button" class="ghost-button" data-action="copy-prompt">复制提示词</button>
           <button type="button" class="ghost-button" data-action="close-result">关闭</button>
           <button type="button" class="danger-button" data-action="delete-result">删除</button>
           <a class="ghost-button" href="${entry.imageUrl}" download="${entry.downloadName}">直接下载</a>
@@ -873,9 +1116,28 @@ function renderCurrentResult(entry) {
 
   const closeButton = resultStage.querySelector('[data-action="close-result"]');
   const deleteButton = resultStage.querySelector('[data-action="delete-result"]');
+  const copyPromptButton = resultStage.querySelector('[data-action="copy-prompt"]');
+  const sendBaseButton = resultStage.querySelector('[data-action="send-base"]');
+  const sendReferenceButton = resultStage.querySelector('[data-action="send-reference"]');
+
+  if (copyPromptButton) {
+    copyPromptButton.disabled = !String(entry.prompt || "").trim();
+  }
 
   closeButton?.addEventListener("click", () => {
     renderCurrentResult(null);
+  });
+
+  copyPromptButton?.addEventListener("click", async () => {
+    await copyPromptText(entry.prompt, "当前结果提示词");
+  });
+
+  sendBaseButton?.addEventListener("click", async () => {
+    await sendImageToBaseFromEntry(entry);
+  });
+
+  sendReferenceButton?.addEventListener("click", async () => {
+    await sendImageToReferenceFromEntry(entry);
   });
 
   deleteButton?.addEventListener("click", async () => {
@@ -1018,7 +1280,11 @@ function renderHistory(items) {
     const prompt = node.querySelector(".history-prompt");
     const viewButton = node.querySelector(".history-view");
     const downloadLink = node.querySelector(".history-download");
+    const copyButton = node.querySelector(".history-copy");
+    const sendBaseButton = node.querySelector(".history-send-base");
+    const sendReferenceButton = node.querySelector(".history-send-reference");
     const deleteButton = node.querySelector(".history-delete");
+    const hasPrompt = Boolean(String(entry.prompt || "").trim());
 
     img.src = entry.thumbUrl || "";
     img.alt = entry.prompt || "历史图片";
@@ -1026,12 +1292,24 @@ function renderHistory(items) {
     img.decoding = "async";
     time.textContent = formatDate(entry.createdAt);
     tags.textContent = `${entry.aspectRatio} · ${entry.imageSize}`;
-    prompt.textContent = entry.prompt || "未填写提示词";
+    prompt.textContent = "";
 
     viewButton.addEventListener("click", () => renderCurrentResult(entry));
 
     downloadLink.href = entry.imageUrl;
     downloadLink.download = entry.downloadName || "banana-pro-image";
+    if (copyButton) {
+      copyButton.disabled = !hasPrompt;
+      copyButton.addEventListener("click", async () => {
+        await copyPromptText(entry.prompt, "历史提示词");
+      });
+    }
+    sendBaseButton?.addEventListener("click", async () => {
+      await sendImageToBaseFromEntry(entry);
+    });
+    sendReferenceButton?.addEventListener("click", async () => {
+      await sendImageToReferenceFromEntry(entry);
+    });
     deleteButton.addEventListener("click", async () => {
       await deleteHistoryItem(entry.id, state.currentResult?.id === entry.id);
     });
@@ -1308,7 +1586,7 @@ referenceInput.addEventListener("change", async () => {
     return;
   }
 
-  const remainingSlots = Math.max(0, 6 - state.referenceFiles.length);
+  const remainingSlots = Math.max(0, REFERENCE_IMAGE_LIMIT - state.referenceFiles.length);
   const acceptedFiles = newFiles.slice(0, remainingSlots);
   const processedFiles = [];
   let compressedCount = 0;
@@ -1334,7 +1612,7 @@ referenceInput.addEventListener("change", async () => {
     messages.push(`${compressedCount} 张参考图已压缩到 2MB 以内。`);
   }
   if (newFiles.length > remainingSlots) {
-    messages.push("参考图最多上传 6 张，超出的图片已忽略。");
+    messages.push(`参考图最多上传 ${REFERENCE_IMAGE_LIMIT} 张，超出的图片已忽略。`);
   }
   if (failedCount > 0) {
     messages.push(`${failedCount} 张参考图压缩失败，已跳过。`);
@@ -1432,6 +1710,7 @@ form.addEventListener("submit", async (event) => {
     setStatus("生成完成，可以直接下载，也会自动保留到历史记录。");
     playSuccessSound();
     sendBrowserNotification("Banana Pro 图片生成成功", "图片已经生成完成，可以回到页面查看和下载。");
+    startTitleFlash("生成成功");
     renderCurrentResult(payload);
     await loadHistory();
   } catch (error) {
@@ -1440,6 +1719,7 @@ form.addEventListener("submit", async (event) => {
     setStatus(message, true);
     playErrorSound();
     sendBrowserNotification("Banana Pro 图片生成失败", message);
+    startTitleFlash("生成失败");
     renderCurrentResult(state.currentResult);
   } finally {
     clearProgress();
@@ -1552,6 +1832,7 @@ loginForm.addEventListener("submit", async (event) => {
     await loadPromptLibrary();
     await loadPromptPersonas();
     await loadHistory();
+    await applyPendingImageTransfers();
   } catch (error) {
     const message = error instanceof Error ? error.message : "登录失败";
     setAuthStatus(message, true);
@@ -1591,6 +1872,7 @@ async function bootstrap() {
       await loadPromptLibrary();
       await loadPromptPersonas();
       await loadHistory();
+      await applyPendingImageTransfers();
     } else {
       historyList.innerHTML = `<div class="empty-history">登录后可查看历史记录。</div>`;
     }
@@ -1601,5 +1883,17 @@ async function bootstrap() {
   syncSubmitButtonState();
   syncAspectRatioPreview();
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && document.hasFocus()) {
+    stopTitleFlash();
+  }
+});
+
+window.addEventListener("focus", () => {
+  if (!document.hidden) {
+    stopTitleFlash();
+  }
+});
 
 bootstrap();
