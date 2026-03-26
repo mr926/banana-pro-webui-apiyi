@@ -185,6 +185,56 @@ function wait(ms) {
   });
 }
 
+async function resolveDownloadTarget(entry) {
+  const id = String(entry?.id || "").trim();
+  const fallbackUrl = getPreferredImageUrl(entry);
+  const fallbackName = entry?.downloadName || "banana-pro-image";
+
+  if (!id) {
+    if (!fallbackUrl) {
+      throw new Error("未找到可用下载地址。");
+    }
+    return { url: fallbackUrl, source: "local", downloadName: fallbackName };
+  }
+
+  const response = await fetch("/api/history/download-links", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids: [id] }),
+  });
+  if (response.status === 401) {
+    throw new Error("__AUTH_REQUIRED__");
+  }
+  const payload = await readJsonSafely(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "获取下载链接失败。");
+  }
+
+  const first = Array.isArray(payload.items) ? payload.items[0] : null;
+  if (first?.url) {
+    return {
+      url: String(first.url),
+      source: String(first.source || "local"),
+      downloadName: first.downloadName || fallbackName,
+    };
+  }
+
+  if (!fallbackUrl) {
+    throw new Error("未找到可用下载地址。");
+  }
+  return { url: fallbackUrl, source: "local", downloadName: fallbackName };
+}
+
+async function downloadEntryImage(entry) {
+  const target = await resolveDownloadTarget(entry);
+  const downloadUrl = buildDirectDownloadUrl(target.url, target.downloadName);
+  if (target.source === "oss-signed") {
+    triggerBackgroundRequest(downloadUrl);
+    return;
+  }
+  triggerBrowserDownload(downloadUrl, target.downloadName);
+}
+
 function getHistorySummaryText() {
   const total = albumState.items.length;
   const selected = albumState.selectedIds.size;
@@ -310,6 +360,7 @@ function renderAlbum(items) {
     const copyButton = node.querySelector(".album-copy");
     const sendBaseButton = node.querySelector(".album-send-base");
     const sendReferenceButton = node.querySelector(".album-send-reference");
+    const downloadLink = node.querySelector(".album-download");
     const hasValidId = typeof entry.id === "string" && entry.id;
     const thumbUrl = getPreferredThumbUrl(entry) || getPreferredImageUrl(entry);
     const imageUrl = getPreferredImageUrl(entry);
@@ -332,8 +383,21 @@ function renderAlbum(items) {
     node.querySelector(".album-tags").textContent = `${entry.aspectRatio} · ${entry.imageSize}`;
     node.querySelector(".album-prompt").textContent = entry.prompt || "未填写提示词";
     node.querySelector(".album-open").href = imageUrl;
-    node.querySelector(".album-download").href = imageUrl;
-    node.querySelector(".album-download").download = entry.downloadName || "banana-pro-image";
+    downloadLink.href = imageUrl;
+    downloadLink.download = entry.downloadName || "banana-pro-image";
+    downloadLink.addEventListener("click", async (event) => {
+      event.preventDefault();
+      try {
+        await downloadEntryImage(entry);
+      } catch (error) {
+        if (error instanceof Error && error.message === "__AUTH_REQUIRED__") {
+          setAlbumAuthUI(false, true);
+          albumGrid.innerHTML = `<div class="empty-history">登录后可查看历史相册。</div>`;
+          return;
+        }
+        alert(error instanceof Error ? error.message : "下载失败，请重试。");
+      }
+    });
     copyButton?.addEventListener("click", async () => {
       await copyPrompt(copyButton, entry.prompt);
     });
