@@ -1,6 +1,7 @@
 import base64
 import cgi
 import hashlib
+import hmac
 import io
 import json
 import mimetypes
@@ -12,12 +13,14 @@ import sys
 import urllib.error
 import urllib.request
 import uuid
+import xml.etree.ElementTree as ET
 import zipfile
 from datetime import datetime
+from email.utils import formatdate
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import quote, unquote, urlencode, urlparse
 
 try:
     from PIL import Image
@@ -80,6 +83,265 @@ ENV_VALUES = load_env_file()
 
 def get_setting(name: str, default: str = "") -> str:
     return os.environ.get(name) or ENV_VALUES.get(name, default)
+
+
+def get_bool_setting(name: str, default: bool = False) -> bool:
+    fallback = "true" if default else "false"
+    value = get_setting(name, fallback)
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def normalize_oss_prefix(prefix: str) -> str:
+    return "/".join(part for part in str(prefix or "").strip("/").split("/") if part)
+
+
+def normalize_oss_endpoint(endpoint: str) -> Tuple[str, str]:
+    raw = str(endpoint or "").strip()
+    if not raw:
+        raise RuntimeError("BANANA_PRO_OSS_ENDPOINT 不能为空。")
+
+    if "://" not in raw:
+        raw = f"https://{raw}"
+    parsed = urlparse(raw)
+
+    scheme = parsed.scheme.lower() if parsed.scheme else "https"
+    if scheme not in {"http", "https"}:
+        raise RuntimeError("BANANA_PRO_OSS_ENDPOINT 必须以 http:// 或 https:// 开头。")
+
+    host = (parsed.netloc or parsed.path).strip().strip("/")
+    if not host:
+        raise RuntimeError("BANANA_PRO_OSS_ENDPOINT 格式不正确。")
+    return scheme, host
+
+
+def quote_oss_object_key(object_key: str) -> str:
+    return quote(object_key, safe="/-_.~")
+
+
+def build_oss_public_url(config: dict, object_key: str) -> str:
+    encoded_key = quote_oss_object_key(object_key)
+    public_base_url = str(config.get("public_base_url", "")).strip().rstrip("/")
+    if public_base_url:
+        return f"{public_base_url}/{encoded_key}"
+    return f"{config['scheme']}://{config['host']}/{encoded_key}"
+
+
+def get_oss_config() -> Optional[dict]:
+    if not get_bool_setting("BANANA_PRO_OSS_ENABLED", False):
+        return None
+
+    bucket = get_setting("BANANA_PRO_OSS_BUCKET", "").strip()
+    access_key_id = get_setting("BANANA_PRO_OSS_ACCESS_KEY_ID", "").strip()
+    access_key_secret = get_setting("BANANA_PRO_OSS_ACCESS_KEY_SECRET", "").strip()
+    endpoint = get_setting("BANANA_PRO_OSS_ENDPOINT", "").strip()
+    missing: List[str] = []
+    if not bucket:
+        missing.append("BANANA_PRO_OSS_BUCKET")
+    if not access_key_id:
+        missing.append("BANANA_PRO_OSS_ACCESS_KEY_ID")
+    if not access_key_secret:
+        missing.append("BANANA_PRO_OSS_ACCESS_KEY_SECRET")
+    if not endpoint:
+        missing.append("BANANA_PRO_OSS_ENDPOINT")
+    if missing:
+        joined = ", ".join(missing)
+        raise RuntimeError(f"已启用 OSS，但缺少必要配置：{joined}")
+
+    scheme, endpoint_host = normalize_oss_endpoint(endpoint)
+    bucket_lower = bucket.lower()
+    endpoint_lower = endpoint_host.lower()
+    host = endpoint_host if endpoint_lower.startswith(f"{bucket_lower}.") else f"{bucket}.{endpoint_host}"
+
+    prefix = normalize_oss_prefix(get_setting("BANANA_PRO_OSS_PREFIX", "banana-pro"))
+
+    public_base_url = get_setting("BANANA_PRO_OSS_PUBLIC_BASE_URL", "").strip()
+    if public_base_url and "://" not in public_base_url:
+        public_base_url = f"https://{public_base_url}"
+
+    return {
+        "scheme": scheme,
+        "host": host,
+        "bucket": bucket,
+        "prefix": prefix,
+        "access_key_id": access_key_id,
+        "access_key_secret": access_key_secret,
+        "public_base_url": public_base_url,
+    }
+
+
+def build_oss_object_key(prefix: str, date_segment: str, category: str, filename: str) -> str:
+    parts: List[str] = []
+    if prefix:
+        parts.append(prefix)
+    if date_segment:
+        parts.append(date_segment.strip("/"))
+    if category:
+        parts.append(category.strip("/"))
+    if filename:
+        parts.append(filename.strip("/"))
+    return "/".join(part for part in parts if part)
+
+
+def sign_oss_request(secret: str, string_to_sign: str) -> str:
+    digest = hmac.new(secret.encode("utf-8"), string_to_sign.encode("utf-8"), hashlib.sha1).digest()
+    return base64.b64encode(digest).decode("utf-8")
+
+
+def build_oss_signed_download_url(
+    config: dict,
+    object_key: str,
+    download_name: str,
+    expires_seconds: int = 600,
+) -> str:
+    normalized_key = "/".join(part for part in str(object_key or "").split("/") if part)
+    if not normalized_key:
+        raise RuntimeError("OSS 对象 Key 不能为空。")
+
+    expires = int(datetime.now().timestamp()) + max(60, int(expires_seconds))
+    safe_download_name = safe_name(download_name or Path(normalized_key).name or "banana-pro-image")
+    content_disposition = f"attachment; filename*=UTF-8''{quote(safe_download_name)}"
+
+    canonical_resource = (
+        f"/{config['bucket']}/{normalized_key}"
+        f"?response-content-disposition={content_disposition}"
+    )
+    string_to_sign = "\n".join(
+        [
+            "GET",
+            "",
+            "",
+            str(expires),
+            canonical_resource,
+        ]
+    )
+    signature = sign_oss_request(config["access_key_secret"], string_to_sign)
+
+    query = urlencode(
+        {
+            "OSSAccessKeyId": config["access_key_id"],
+            "Expires": str(expires),
+            "Signature": signature,
+            "response-content-disposition": content_disposition,
+        }
+    )
+    encoded_key = quote_oss_object_key(normalized_key)
+    return f"{config['scheme']}://{config['host']}/{encoded_key}?{query}"
+
+
+def infer_oss_object_key_from_url(oss_url: str) -> str:
+    parsed = urlparse(str(oss_url or "").strip())
+    return parsed.path.lstrip("/")
+
+
+def upload_bytes_to_oss(config: dict, object_key: str, body: bytes, content_type: str) -> str:
+    normalized_key = "/".join(part for part in str(object_key or "").split("/") if part)
+    if not normalized_key:
+        raise RuntimeError("OSS 对象 Key 不能为空。")
+
+    date_value = formatdate(usegmt=True)
+    headers = {
+        "Date": date_value,
+        "Content-Type": content_type or "application/octet-stream",
+    }
+
+    string_to_sign = "\n".join(
+        [
+            "PUT",
+            "",
+            headers["Content-Type"],
+            date_value,
+            f"/{config['bucket']}/{normalized_key}",
+        ]
+    )
+    signature = sign_oss_request(config["access_key_secret"], string_to_sign)
+    headers["Authorization"] = f"OSS {config['access_key_id']}:{signature}"
+
+    upload_url = f"{config['scheme']}://{config['host']}/{quote_oss_object_key(normalized_key)}"
+    request = urllib.request.Request(upload_url, data=body, headers=headers, method="PUT")
+
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            status = getattr(response, "status", 200)
+            if status < 200 or status >= 300:
+                raise RuntimeError(f"OSS 返回了非成功状态码：HTTP {status}")
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        details = raw.strip()[:800] or str(exc.reason or "")
+        raise RuntimeError(f"OSS 上传失败（HTTP {exc.code}）：{details}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"OSS 上传失败：{exc}") from exc
+
+    return build_oss_public_url(config, normalized_key)
+
+
+def upload_generated_assets_to_oss(
+    config: dict,
+    now: datetime,
+    image_filename: str,
+    image_bytes: bytes,
+    image_mime_type: str,
+    thumb_filename: str,
+    thumb_bytes: bytes,
+    metadata_filename: str,
+    metadata_bytes: bytes,
+) -> dict:
+    # Group objects by YYMM folder, e.g. 2603.
+    date_segment = now.strftime("%y%m")
+    # Main image goes directly under YYMM/.
+    image_key = build_oss_object_key(config["prefix"], date_segment, "", image_filename)
+    thumb_key = build_oss_object_key(config["prefix"], date_segment, "thumbs", thumb_filename)
+    metadata_key = build_oss_object_key(config["prefix"], date_segment, "XML", metadata_filename)
+    image_url = upload_bytes_to_oss(config, image_key, image_bytes, image_mime_type)
+    thumb_url = upload_bytes_to_oss(config, thumb_key, thumb_bytes, "image/jpeg")
+    metadata_url = upload_bytes_to_oss(
+        config,
+        metadata_key,
+        metadata_bytes,
+        "application/xml; charset=utf-8",
+    )
+    return {
+        "image_url": image_url,
+        "thumb_url": thumb_url,
+        "metadata_url": metadata_url,
+        "image_key": image_key,
+        "thumb_key": thumb_key,
+        "metadata_key": metadata_key,
+    }
+
+
+def build_generation_metadata_xml(
+    file_id: str,
+    created_at: datetime,
+    prompt: str,
+    source_prompt: str,
+    prompt_mode: str,
+    aspect_ratio: str,
+    image_size: str,
+    enable_search: bool,
+    base_image_name: str,
+    reference_count: int,
+    mime_type: str,
+) -> bytes:
+    root = ET.Element("bananaProGeneration")
+    root.set("id", str(file_id))
+    root.set("createdAt", created_at.isoformat(timespec="seconds"))
+
+    fields = {
+        "prompt": prompt,
+        "sourcePrompt": source_prompt,
+        "promptMode": prompt_mode,
+        "aspectRatio": aspect_ratio,
+        "imageSize": image_size,
+        "enableSearch": "true" if enable_search else "false",
+        "baseImageName": base_image_name,
+        "referenceCount": str(reference_count),
+        "mimeType": mime_type,
+    }
+    for key, value in fields.items():
+        node = ET.SubElement(root, key)
+        node.text = str(value or "")
+
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
 def read_history() -> List[dict]:
@@ -869,6 +1131,11 @@ class AppHandler(BaseHTTPRequestHandler):
                 return
             return self.handle_download_history_zip()
 
+        if parsed.path == "/api/history/download-links":
+            if not self.ensure_authenticated():
+                return
+            return self.handle_download_history_links()
+
         if parsed.path == "/api/generate":
             if not self.ensure_authenticated():
                 return
@@ -1010,6 +1277,18 @@ class AppHandler(BaseHTTPRequestHandler):
                 {"error": "缺少 BANANA_PRO_API_KEY，请先在 .env 中配置。"},
             )
 
+        try:
+            oss_config = get_oss_config()
+        except RuntimeError as exc:
+            return json_response(
+                self,
+                500,
+                {
+                    "error": "OSS 配置无效。",
+                    "details": str(exc),
+                },
+            )
+
         form = self.parse_multipart_form()
         if form is None:
             return
@@ -1113,6 +1392,49 @@ class AppHandler(BaseHTTPRequestHandler):
                 },
             )
 
+        oss_image_url: Optional[str] = None
+        oss_thumb_url: Optional[str] = None
+        oss_metadata_url: Optional[str] = None
+        oss_image_key: Optional[str] = None
+        oss_thumb_key: Optional[str] = None
+        oss_metadata_key: Optional[str] = None
+        oss_error: Optional[str] = None
+        if oss_config:
+            try:
+                metadata_filename = f"{file_id}.xml"
+                metadata_bytes = build_generation_metadata_xml(
+                    file_id=file_id,
+                    created_at=now,
+                    prompt=prompt,
+                    source_prompt=source_prompt or prompt,
+                    prompt_mode=prompt_mode,
+                    aspect_ratio=aspect_ratio,
+                    image_size=image_size,
+                    enable_search=enable_search,
+                    base_image_name=base_upload["filename"],
+                    reference_count=len(ref_uploads),
+                    mime_type=mime_type,
+                )
+                uploaded = upload_generated_assets_to_oss(
+                    config=oss_config,
+                    now=now,
+                    image_filename=filename,
+                    image_bytes=image_bytes,
+                    image_mime_type=mime_type,
+                    thumb_filename=thumb_path.name,
+                    thumb_bytes=thumb_path.read_bytes(),
+                    metadata_filename=metadata_filename,
+                    metadata_bytes=metadata_bytes,
+                )
+                oss_image_url = uploaded["image_url"]
+                oss_thumb_url = uploaded["thumb_url"]
+                oss_metadata_url = uploaded["metadata_url"]
+                oss_image_key = uploaded["image_key"]
+                oss_thumb_key = uploaded["thumb_key"]
+                oss_metadata_key = uploaded["metadata_key"]
+            except Exception as exc:
+                oss_error = str(exc)
+
         entry = {
             "id": file_id,
             "createdAt": now.isoformat(timespec="seconds"),
@@ -1129,6 +1451,20 @@ class AppHandler(BaseHTTPRequestHandler):
             "downloadName": f"banana-pro-{file_id}{extension_for_mime(mime_type)}",
             "message": message,
         }
+        if oss_image_url:
+            entry["ossImageUrl"] = oss_image_url
+        if oss_thumb_url:
+            entry["ossThumbUrl"] = oss_thumb_url
+        if oss_image_key:
+            entry["ossImageKey"] = oss_image_key
+        if oss_thumb_key:
+            entry["ossThumbKey"] = oss_thumb_key
+        if oss_metadata_url:
+            entry["ossMetadataXmlUrl"] = oss_metadata_url
+        if oss_metadata_key:
+            entry["ossMetadataXmlKey"] = oss_metadata_key
+        if oss_error:
+            entry["ossUploadError"] = oss_error
         append_history(entry)
         json_response(self, 200, entry)
 
@@ -1272,6 +1608,7 @@ class AppHandler(BaseHTTPRequestHandler):
         if removed is None:
             return json_response(self, 404, {"error": "未找到对应的历史记录。"})
 
+        # Keep OSS objects intentionally; only local cache files are removed.
         image_target = resolve_generated_path(str(removed.get("imageUrl", "")))
         if image_target:
             try:
@@ -1368,6 +1705,91 @@ class AppHandler(BaseHTTPRequestHandler):
         )
         self.end_headers()
         self.wfile.write(body)
+
+    def handle_download_history_links(self) -> None:
+        try:
+            payload = self.read_json_body()
+        except Exception:
+            return json_response(self, 400, {"error": "请求格式不正确。"})
+
+        raw_ids = payload.get("ids")
+        if not isinstance(raw_ids, list):
+            return json_response(self, 400, {"error": "缺少要下载的图片 id 列表。"})
+
+        selected_ids: List[str] = []
+        for item in raw_ids:
+            item_id = str(item).strip()
+            if item_id and item_id not in selected_ids:
+                selected_ids.append(item_id)
+
+        if not selected_ids:
+            return json_response(self, 400, {"error": "请至少选择一张图片。"})
+
+        history_map = {
+            str(entry.get("id")): entry
+            for entry in read_history()
+            if isinstance(entry, dict) and entry.get("id")
+        }
+        selected_entries = [history_map[item_id] for item_id in selected_ids if item_id in history_map]
+        if not selected_entries:
+            return json_response(self, 404, {"error": "未找到所选历史记录。"})
+
+        try:
+            oss_config = get_oss_config()
+        except RuntimeError:
+            oss_config = None
+
+        items: List[dict] = []
+        skipped = 0
+        for entry in selected_entries:
+            item_id = str(entry.get("id", "")).strip()
+            download_name = str(entry.get("downloadName", "")).strip() or "banana-pro-image"
+
+            signed_oss_url: Optional[str] = None
+            if oss_config:
+                object_key = str(entry.get("ossImageKey", "")).strip()
+                if not object_key:
+                    object_key = infer_oss_object_key_from_url(str(entry.get("ossImageUrl", "")))
+                if object_key:
+                    try:
+                        signed_oss_url = build_oss_signed_download_url(oss_config, object_key, download_name)
+                    except Exception:
+                        signed_oss_url = None
+
+            if signed_oss_url:
+                items.append(
+                    {
+                        "id": item_id,
+                        "url": signed_oss_url,
+                        "downloadName": download_name,
+                        "source": "oss-signed",
+                    }
+                )
+                continue
+
+            local_url = str(entry.get("imageUrl", "")).strip()
+            if local_url:
+                items.append(
+                    {
+                        "id": item_id,
+                        "url": local_url,
+                        "downloadName": download_name,
+                        "source": "local",
+                    }
+                )
+                continue
+
+            skipped += 1
+
+        return json_response(
+            self,
+            200,
+            {
+                "items": items,
+                "requested": len(selected_entries),
+                "skipped": skipped,
+            },
+        )
 
     def handle_delete_prompt_persona(self, persona_id: str) -> None:
         if not delete_prompt_persona(persona_id):
