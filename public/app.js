@@ -199,6 +199,18 @@ function ensureImageFileName(name, mimeType, fallback = "history-image") {
   return `${stem}.${ext || "jpg"}`;
 }
 
+function getPreferredImageUrl(entry) {
+  return String(entry?.ossImageUrl || entry?.imageUrl || "").trim();
+}
+
+function getPreferredThumbUrl(entry) {
+  return String(entry?.ossThumbUrl || entry?.thumbUrl || "").trim();
+}
+
+function getTransferImageUrl(entry) {
+  return String(entry?.imageUrl || getPreferredImageUrl(entry) || "").trim();
+}
+
 async function fetchImageAsFile(imageUrl, preferredName = "history-image") {
   const response = await fetch(imageUrl, { credentials: "include" });
   if (!response.ok) {
@@ -401,7 +413,8 @@ function renderReferencePreview() {
 
 async function sendImageToBaseFromEntry(entry, options = {}) {
   const { silent = false } = options;
-  if (!entry?.imageUrl) {
+  const transferImageUrl = getTransferImageUrl(entry);
+  if (!transferImageUrl) {
     if (!silent) {
       setStatus("图片地址无效，无法发送到基础结构图。", true);
     }
@@ -409,7 +422,7 @@ async function sendImageToBaseFromEntry(entry, options = {}) {
   }
 
   try {
-    const sourceFile = await fetchImageAsFile(entry.imageUrl, entry.downloadName || "base-image");
+    const sourceFile = await fetchImageAsFile(transferImageUrl, entry.downloadName || "base-image");
     const result = await compressBaseImageIfNeeded(sourceFile);
     state.baseImageFile = result.file;
     syncNativeInputFiles(baseInput, [result.file]);
@@ -431,7 +444,8 @@ async function sendImageToBaseFromEntry(entry, options = {}) {
 
 async function sendImageToReferenceFromEntry(entry, options = {}) {
   const { silent = false } = options;
-  if (!entry?.imageUrl) {
+  const transferImageUrl = getTransferImageUrl(entry);
+  if (!transferImageUrl) {
     if (!silent) {
       setStatus("图片地址无效，无法发送到风格参考图。", true);
     }
@@ -446,7 +460,7 @@ async function sendImageToReferenceFromEntry(entry, options = {}) {
   }
 
   try {
-    const sourceFile = await fetchImageAsFile(entry.imageUrl, entry.downloadName || "reference-image");
+    const sourceFile = await fetchImageAsFile(transferImageUrl, entry.downloadName || "reference-image");
     const result = await compressReferenceImageIfNeeded(sourceFile);
     state.referenceFiles = [...state.referenceFiles, result.file];
     syncNativeInputFiles(referenceInput, state.referenceFiles);
@@ -1093,11 +1107,12 @@ function renderCurrentResult(entry) {
     return;
   }
 
+  const displayImageUrl = getPreferredImageUrl(entry);
   resultStage.className = "result-stage";
   resultStage.innerHTML = `
     <div class="result-view">
       <div class="result-image-shell">
-        <img class="result-image-original" src="${entry.imageUrl}" alt="生成结果" />
+        <img class="result-image-original" src="${displayImageUrl}" alt="生成结果" />
         <div class="image-transfer-actions">
           <button type="button" class="image-transfer-button" data-action="send-base">基础图</button>
           <button type="button" class="image-transfer-button" data-action="send-reference">参考图</button>
@@ -1108,7 +1123,7 @@ function renderCurrentResult(entry) {
           <button type="button" class="ghost-button" data-action="copy-prompt">复制提示词</button>
           <button type="button" class="ghost-button" data-action="close-result">关闭</button>
           <button type="button" class="danger-button" data-action="delete-result">删除</button>
-          <a class="ghost-button" href="${entry.imageUrl}" download="${entry.downloadName}">直接下载</a>
+          <a class="ghost-button" href="${displayImageUrl}" download="${entry.downloadName}">直接下载</a>
         </div>
       </div>
     </div>
@@ -1286,7 +1301,9 @@ function renderHistory(items) {
     const deleteButton = node.querySelector(".history-delete");
     const hasPrompt = Boolean(String(entry.prompt || "").trim());
 
-    img.src = entry.thumbUrl || "";
+    const thumbUrl = getPreferredThumbUrl(entry) || getPreferredImageUrl(entry);
+    const imageUrl = getPreferredImageUrl(entry);
+    img.src = thumbUrl;
     img.alt = entry.prompt || "历史图片";
     img.loading = "lazy";
     img.decoding = "async";
@@ -1296,7 +1313,7 @@ function renderHistory(items) {
 
     viewButton.addEventListener("click", () => renderCurrentResult(entry));
 
-    downloadLink.href = entry.imageUrl;
+    downloadLink.href = imageUrl;
     downloadLink.download = entry.downloadName || "banana-pro-image";
     if (copyButton) {
       copyButton.disabled = !hasPrompt;

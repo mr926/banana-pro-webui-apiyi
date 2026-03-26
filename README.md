@@ -13,6 +13,7 @@
 - AI 翻译优化模式，支持选择和管理提示词优化人格
 - 结果图直接下载
 - 本地保留历史图片和历史记录
+- 历史相册支持批量下载选中图片（优先 OSS，缺失时回退本地）
 
 ## 最近更新（2026-03）
 
@@ -20,6 +21,7 @@
 - 首页“开始生成”按钮固定在左下角，不随滚动移动。
 - 首页“当前结果”和“历史图片”不再直接展示完整提示词，改为通过按钮复制完整提示词，界面更干净。
 - 历史相册卡片新增“复制提示词”按钮，可复制完整提示词内容。
+- 历史相册“下载选中 ZIP”已改为“批量下载选中”，优先走 OSS 签名下载链接，未命中 OSS 时回退本地下载。
 - 在以下图片上方新增悬浮快捷按钮，可一键发送到“基础结构图”或“风格参考图”：
   - 首页当前结果图
   - 首页历史缩略图
@@ -48,6 +50,13 @@ python3 server.py
 - `BANANA_PRO_LLM_MODEL`
 - `BANANA_PRO_HOST`
 - `BANANA_PRO_PORT`
+- `BANANA_PRO_OSS_ENABLED`
+- `BANANA_PRO_OSS_ENDPOINT`
+- `BANANA_PRO_OSS_BUCKET`
+- `BANANA_PRO_OSS_ACCESS_KEY_ID`
+- `BANANA_PRO_OSS_ACCESS_KEY_SECRET`
+- `BANANA_PRO_OSS_PREFIX`
+- `BANANA_PRO_OSS_PUBLIC_BASE_URL`
 
 也可以直接通过环境变量传入，环境变量优先级高于 `.env`。
 
@@ -73,7 +82,38 @@ BANANA_PRO_LLM_API_URL=https://api.apiyi.com/v1/chat/completions
 BANANA_PRO_LLM_MODEL=gpt-5.4
 BANANA_PRO_HOST=127.0.0.1
 BANANA_PRO_PORT=8787
+BANANA_PRO_OSS_ENABLED=false
+BANANA_PRO_OSS_ENDPOINT=oss-cn-hangzhou.aliyuncs.com
+BANANA_PRO_OSS_BUCKET=
+BANANA_PRO_OSS_ACCESS_KEY_ID=
+BANANA_PRO_OSS_ACCESS_KEY_SECRET=
+BANANA_PRO_OSS_PREFIX=banana-pro
+BANANA_PRO_OSS_PUBLIC_BASE_URL=
 ```
+
+### 阿里云 OSS（可选）
+
+开启后，服务端会在每次生成成功后，把“原图 + 缩略图”上传到 OSS，并在历史记录里额外写入：
+
+- `ossImageUrl`
+- `ossThumbUrl`
+- `ossImageKey`
+- `ossThumbKey`
+- `ossMetadataXmlUrl`
+- `ossMetadataXmlKey`
+
+默认仍保留本地文件和本地 `imageUrl` / `thumbUrl`，不会影响现有页面与历史管理逻辑。
+OSS 对象会按 `YYMM` 文件夹归类：主图在 `YYMM/...`，参数 XML 在 `YYMM/XML/...`（缩略图在 `YYMM/thumbs/...`）；删除历史记录时仅删除本地文件，不删除 OSS 对象。
+当 OSS 上传失败时，生成流程仍返回成功，错误信息会记录在 `ossUploadError` 字段中。
+
+关键配置说明：
+
+- `BANANA_PRO_OSS_ENABLED=true`：启用 OSS 上传。
+- `BANANA_PRO_OSS_ENDPOINT`：例如 `oss-cn-hangzhou.aliyuncs.com`。
+- `BANANA_PRO_OSS_BUCKET`：Bucket 名称。
+- `BANANA_PRO_OSS_ACCESS_KEY_ID` / `BANANA_PRO_OSS_ACCESS_KEY_SECRET`：访问凭证。
+- `BANANA_PRO_OSS_PREFIX`：对象前缀目录，例如 `banana-pro`。
+- `BANANA_PRO_OSS_PUBLIC_BASE_URL`：可选；若你绑定了 CDN / 自定义域名，可在这里填公开访问前缀。
 
 ## 提示词与人格管理
 
@@ -121,6 +161,13 @@ export BANANA_PRO_API_URL="https://api.apiyi.com/v1beta/models/gemini-3-pro-imag
 export BANANA_PRO_UI_PASSWORD=""
 export BANANA_PRO_HOST="0.0.0.0"
 export BANANA_PRO_PORT="8787"
+export BANANA_PRO_OSS_ENABLED="false"
+export BANANA_PRO_OSS_ENDPOINT="oss-cn-hangzhou.aliyuncs.com"
+export BANANA_PRO_OSS_BUCKET="your_bucket_name"
+export BANANA_PRO_OSS_ACCESS_KEY_ID="your_access_key_id"
+export BANANA_PRO_OSS_ACCESS_KEY_SECRET="your_access_key_secret"
+export BANANA_PRO_OSS_PREFIX="banana-pro"
+export BANANA_PRO_OSS_PUBLIC_BASE_URL=""
 docker compose up -d --build
 ```
 

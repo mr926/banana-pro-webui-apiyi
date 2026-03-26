@@ -17,6 +17,18 @@ const albumState = {
   passwordEnabled: false,
 };
 
+function getPreferredImageUrl(entry) {
+  return String(entry?.ossImageUrl || entry?.imageUrl || "").trim();
+}
+
+function getPreferredThumbUrl(entry) {
+  return String(entry?.ossThumbUrl || entry?.thumbUrl || "").trim();
+}
+
+function getTransferImageUrl(entry) {
+  return String(entry?.imageUrl || getPreferredImageUrl(entry) || "").trim();
+}
+
 function setAlbumAuthStatus(message, isError = false) {
   albumAuthStatus.textContent = message || "";
   albumAuthStatus.style.color = isError ? "#d14343" : "";
@@ -117,7 +129,7 @@ function readImageTransferQueue() {
 }
 
 function enqueueImageTransfer(entry, target) {
-  const imageUrl = String(entry?.imageUrl || "").trim();
+  const imageUrl = getTransferImageUrl(entry);
   if (!imageUrl) {
     throw new Error("图片地址无效，无法发送。");
   }
@@ -141,22 +153,36 @@ function sendImageToWorkbench(entry, target) {
   }
 }
 
-function parseDownloadFilename(response) {
-  const disposition = response.headers.get("Content-Disposition") || "";
-  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
-  if (utf8Match && utf8Match[1]) {
-    try {
-      return decodeURIComponent(utf8Match[1]);
-    } catch (error) {
-      // Ignore malformed value and continue fallback parsing.
-    }
-  }
+function buildDirectDownloadUrl(imageUrl, filename) {
+  const trimmedUrl = String(imageUrl || "").trim();
+  if (!trimmedUrl) return "";
+  return trimmedUrl;
+}
 
-  const plainMatch = disposition.match(/filename="?([^"]+)"?/i);
-  if (plainMatch && plainMatch[1]) {
-    return plainMatch[1];
-  }
-  return "banana-pro-history.zip";
+function triggerBrowserDownload(url, filename) {
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename || "banana-pro-image";
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
+function triggerBackgroundRequest(url) {
+  const frame = document.createElement("iframe");
+  frame.style.display = "none";
+  frame.src = url;
+  document.body.appendChild(frame);
+  window.setTimeout(() => {
+    frame.remove();
+  }, 45000);
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }
 
 function getHistorySummaryText() {
@@ -203,52 +229,65 @@ function syncAlbumToolbar() {
   }
 }
 
-async function downloadSelectedAsZip() {
+async function downloadSelectedInBatch() {
   const ids = Array.from(albumState.selectedIds);
   if (ids.length === 0) return;
 
   if (albumDownloadSelectedButton) {
     albumDownloadSelectedButton.disabled = true;
-    albumDownloadSelectedButton.textContent = "正在打包...";
+    albumDownloadSelectedButton.textContent = "正在准备下载...";
   }
 
   try {
-    const response = await fetch("/api/history/download-zip", {
+    const response = await fetch("/api/history/download-links", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids }),
     });
-
     if (response.status === 401) {
       setAlbumAuthUI(false, true);
       albumGrid.innerHTML = `<div class="empty-history">登录后可查看历史相册。</div>`;
       return;
     }
-
+    const payload = await readJsonSafely(response);
     if (!response.ok) {
-      const payload = await readJsonSafely(response);
-      throw new Error(payload.error || "下载 ZIP 失败");
+      throw new Error(payload.error || "获取批量下载链接失败。");
     }
 
-    const blob = await response.blob();
-    if (!blob.size) {
-      throw new Error("打包结果为空，请重试。");
+    const targets = Array.isArray(payload.items) ? payload.items.filter((item) => item?.url) : [];
+
+    if (targets.length === 0) {
+      throw new Error("选中的图片没有可用下载地址。");
     }
 
-    const filename = parseDownloadFilename(response);
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
+    if (albumDownloadSelectedButton) {
+      albumDownloadSelectedButton.textContent = "正在批量下载...";
+    }
+
+    for (const [index, item] of targets.entries()) {
+      const downloadUrl = buildDirectDownloadUrl(item.url, item.downloadName || item.filename);
+      const source = String(item.source || "");
+      if (source === "oss-signed") {
+        triggerBackgroundRequest(downloadUrl);
+      } else {
+        triggerBrowserDownload(downloadUrl, item.downloadName || item.filename);
+      }
+      if (index < targets.length - 1) {
+        await wait(180);
+      }
+    }
+
+    const ossCount = targets.filter((item) => item.source === "oss-signed").length;
+    const localCount = targets.length - ossCount;
+    const skipped = Math.max(0, Number(payload.skipped || 0));
+    if (localCount > 0 || skipped > 0) {
+      alert(`已触发下载：OSS ${ossCount} 张，本地 ${localCount} 张，跳过 ${skipped} 张。`);
+    }
   } catch (error) {
-    alert(error instanceof Error ? error.message : "下载 ZIP 失败");
+    alert(error instanceof Error ? error.message : "批量下载失败");
   } finally {
     if (albumDownloadSelectedButton) {
-      albumDownloadSelectedButton.textContent = "下载选中 ZIP";
+      albumDownloadSelectedButton.textContent = "批量下载选中";
     }
     syncAlbumToolbar();
   }
@@ -272,7 +311,9 @@ function renderAlbum(items) {
     const sendBaseButton = node.querySelector(".album-send-base");
     const sendReferenceButton = node.querySelector(".album-send-reference");
     const hasValidId = typeof entry.id === "string" && entry.id;
-    image.src = entry.thumbUrl || "";
+    const thumbUrl = getPreferredThumbUrl(entry) || getPreferredImageUrl(entry);
+    const imageUrl = getPreferredImageUrl(entry);
+    image.src = thumbUrl;
     image.alt = entry.prompt || "历史相册图片";
     image.loading = "lazy";
     image.decoding = "async";
@@ -290,8 +331,8 @@ function renderAlbum(items) {
     node.querySelector(".album-time").textContent = formatAlbumDate(entry.createdAt);
     node.querySelector(".album-tags").textContent = `${entry.aspectRatio} · ${entry.imageSize}`;
     node.querySelector(".album-prompt").textContent = entry.prompt || "未填写提示词";
-    node.querySelector(".album-open").href = entry.imageUrl;
-    node.querySelector(".album-download").href = entry.imageUrl;
+    node.querySelector(".album-open").href = imageUrl;
+    node.querySelector(".album-download").href = imageUrl;
     node.querySelector(".album-download").download = entry.downloadName || "banana-pro-image";
     copyButton?.addEventListener("click", async () => {
       await copyPrompt(copyButton, entry.prompt);
@@ -386,7 +427,7 @@ albumClearSelectionButton?.addEventListener("click", () => {
 });
 
 albumDownloadSelectedButton?.addEventListener("click", async () => {
-  await downloadSelectedAsZip();
+  await downloadSelectedInBatch();
 });
 
 syncAlbumToolbar();
