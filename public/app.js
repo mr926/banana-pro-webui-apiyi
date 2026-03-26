@@ -211,6 +211,75 @@ function getTransferImageUrl(entry) {
   return String(entry?.imageUrl || getPreferredImageUrl(entry) || "").trim();
 }
 
+function triggerDownloadLink(url, filename) {
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename || "banana-pro-image";
+  anchor.rel = "noopener";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
+function triggerBackgroundDownload(url) {
+  const frame = document.createElement("iframe");
+  frame.style.display = "none";
+  frame.src = url;
+  document.body.appendChild(frame);
+  window.setTimeout(() => {
+    frame.remove();
+  }, 45000);
+}
+
+async function resolveDownloadTarget(entry) {
+  const id = String(entry?.id || "").trim();
+  const fallbackUrl = getPreferredImageUrl(entry);
+  const fallbackName = entry?.downloadName || "banana-pro-image";
+
+  if (!id) {
+    if (!fallbackUrl) {
+      throw new Error("未找到可用下载地址。");
+    }
+    return { url: fallbackUrl, source: "local", downloadName: fallbackName };
+  }
+
+  const response = await fetch("/api/history/download-links", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids: [id] }),
+  });
+  if (response.status === 401) {
+    throw new Error("__AUTH_REQUIRED__");
+  }
+  const payload = await readJsonSafely(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "获取下载链接失败。");
+  }
+
+  const first = Array.isArray(payload.items) ? payload.items[0] : null;
+  if (first?.url) {
+    return {
+      url: String(first.url),
+      source: String(first.source || "local"),
+      downloadName: first.downloadName || fallbackName,
+    };
+  }
+
+  if (!fallbackUrl) {
+    throw new Error("未找到可用下载地址。");
+  }
+  return { url: fallbackUrl, source: "local", downloadName: fallbackName };
+}
+
+async function downloadEntryImage(entry) {
+  const target = await resolveDownloadTarget(entry);
+  if (target.source === "oss-signed") {
+    triggerBackgroundDownload(target.url);
+    return;
+  }
+  triggerDownloadLink(target.url, target.downloadName);
+}
+
 async function fetchImageAsFile(imageUrl, preferredName = "history-image") {
   const response = await fetch(imageUrl, { credentials: "include" });
   if (!response.ok) {
@@ -1123,7 +1192,7 @@ function renderCurrentResult(entry) {
           <button type="button" class="ghost-button" data-action="copy-prompt">复制提示词</button>
           <button type="button" class="ghost-button" data-action="close-result">关闭</button>
           <button type="button" class="danger-button" data-action="delete-result">删除</button>
-          <a class="ghost-button" href="${displayImageUrl}" download="${entry.downloadName}">直接下载</a>
+          <button type="button" class="ghost-button" data-action="download-result">直接下载</button>
         </div>
       </div>
     </div>
@@ -1132,6 +1201,7 @@ function renderCurrentResult(entry) {
   const closeButton = resultStage.querySelector('[data-action="close-result"]');
   const deleteButton = resultStage.querySelector('[data-action="delete-result"]');
   const copyPromptButton = resultStage.querySelector('[data-action="copy-prompt"]');
+  const downloadButton = resultStage.querySelector('[data-action="download-result"]');
   const sendBaseButton = resultStage.querySelector('[data-action="send-base"]');
   const sendReferenceButton = resultStage.querySelector('[data-action="send-reference"]');
 
@@ -1145,6 +1215,20 @@ function renderCurrentResult(entry) {
 
   copyPromptButton?.addEventListener("click", async () => {
     await copyPromptText(entry.prompt, "当前结果提示词");
+  });
+
+  downloadButton?.addEventListener("click", async () => {
+    try {
+      await downloadEntryImage(entry);
+    } catch (error) {
+      if (error instanceof Error && error.message === "__AUTH_REQUIRED__") {
+        setAuthUI(false, true);
+        setStatus("登录后可下载图片。", true);
+        return;
+      }
+      const message = error instanceof Error ? error.message : "下载失败，请重试。";
+      setStatus(message, true);
+    }
   });
 
   sendBaseButton?.addEventListener("click", async () => {
@@ -1315,6 +1399,20 @@ function renderHistory(items) {
 
     downloadLink.href = imageUrl;
     downloadLink.download = entry.downloadName || "banana-pro-image";
+    downloadLink.addEventListener("click", async (event) => {
+      event.preventDefault();
+      try {
+        await downloadEntryImage(entry);
+      } catch (error) {
+        if (error instanceof Error && error.message === "__AUTH_REQUIRED__") {
+          setAuthUI(false, true);
+          setStatus("登录后可下载图片。", true);
+          return;
+        }
+        const message = error instanceof Error ? error.message : "下载失败，请重试。";
+        setStatus(message, true);
+      }
+    });
     if (copyButton) {
       copyButton.disabled = !hasPrompt;
       copyButton.addEventListener("click", async () => {
