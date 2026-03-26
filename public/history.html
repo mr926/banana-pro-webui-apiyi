@@ -17,7 +17,7 @@
         <div class="brand-actions album-toolbar">
           <button type="button" id="album-select-all" class="ghost-button">全选</button>
           <button type="button" id="album-clear-selection" class="ghost-button">清空选择</button>
-          <button type="button" id="album-download-selected" class="primary-button">下载选中 ZIP</button>
+          <button type="button" id="album-download-selected" class="primary-button">批量下载选中</button>
           <a href="/" class="ghost-button">返回工作台</a>
         </div>
       </header>
@@ -33,7 +33,8 @@
         <div class="eyebrow">Protected</div>
         <h2>请输入访问密码</h2>
         <p>登录后可查看历史相册。</p>
-        <input id="album-password-input" class="auth-input" type="password" placeholder="请输入密码" autocomplete="current-password" />
+        <input class="sr-only" type="text" name="username" autocomplete="username" value="banana-pro-ui" tabindex="-1" aria-hidden="true" />
+        <input id="album-password-input" name="password" class="auth-input" type="password" placeholder="请输入密码" autocomplete="current-password" />
         <button type="submit" class="primary-button">进入相册</button>
         <p id="album-auth-status" class="form-status"></p>
       </form>
