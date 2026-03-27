@@ -20,7 +20,7 @@ from email.utils import formatdate
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import quote, unquote, urlencode, urlparse
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlparse, urlunparse
 
 try:
     from PIL import Image
@@ -89,6 +89,32 @@ def get_bool_setting(name: str, default: bool = False) -> bool:
     fallback = "true" if default else "false"
     value = get_setting(name, fallback)
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def is_google_generative_endpoint(api_url: str) -> bool:
+    parsed = urlparse(str(api_url or "").strip())
+    host = (parsed.netloc or "").lower()
+    return host.endswith("generativelanguage.googleapis.com")
+
+
+def with_query_param(url: str, key: str, value: str) -> str:
+    parsed = urlparse(str(url or "").strip())
+    pairs = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k != key]
+    pairs.append((key, value))
+    return urlunparse(parsed._replace(query=urlencode(pairs)))
+
+
+def build_authenticated_request(api_url: str, body: bytes, api_key: str) -> urllib.request.Request:
+    request_url = str(api_url or "").strip()
+    headers = {"Content-Type": "application/json"}
+
+    # Google Generative Language REST expects API key auth (query/header), not Bearer tokens.
+    if is_google_generative_endpoint(request_url):
+        request_url = with_query_param(request_url, "key", api_key)
+    else:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    return urllib.request.Request(request_url, data=body, headers=headers, method="POST")
 
 
 def normalize_oss_prefix(prefix: str) -> str:
@@ -1326,15 +1352,7 @@ class AppHandler(BaseHTTPRequestHandler):
 
         try:
             body = json.dumps(payload).encode("utf-8")
-            request = urllib.request.Request(
-                api_url,
-                data=body,
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}",
-                },
-                method="POST",
-            )
+            request = build_authenticated_request(api_url, body, api_key)
             with urllib.request.urlopen(request, timeout=TIMEOUT_MAP.get(image_size, 300)) as response:
                 response_payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
@@ -1548,15 +1566,7 @@ class AppHandler(BaseHTTPRequestHandler):
 
         request_payload = build_prompt_optimizer_payload(prompt, persona["content"], llm_model)
         request_body = json.dumps(request_payload).encode("utf-8")
-        request = urllib.request.Request(
-            api_url,
-            data=request_body,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
-            method="POST",
-        )
+        request = build_authenticated_request(api_url, request_body, api_key)
 
         try:
             with urllib.request.urlopen(request, timeout=PROMPT_OPTIMIZER_TIMEOUT) as response:
