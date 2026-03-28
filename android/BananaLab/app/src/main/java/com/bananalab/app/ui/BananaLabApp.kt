@@ -658,6 +658,20 @@ private fun GenerateScreen(
     ) {
         item {
             SectionCard(
+                title = "基础结构图",
+                subtitle = "必填，决定主体构图与空间关系。",
+                titleStyle = MaterialTheme.typography.titleSmall,
+                subtitleStyle = MaterialTheme.typography.bodySmall,
+            ) {
+                BaseImagePanel(
+                    image = state.baseImage,
+                    onAdd = onBasePicker,
+                    onRemove = onClearBaseImage,
+                )
+            }
+        }
+        item {
+            SectionCard(
                 title = "提示词编辑器",
                 subtitle = "把这里当作编辑器，不是表单。",
                 titleStyle = MaterialTheme.typography.titleSmall,
@@ -830,6 +844,75 @@ private fun GenerateScreen(
                 onSendToReference = onSendCurrentResultToReference,
                 onLoadRemoteBitmap = onLoadRemoteBitmap,
             )
+        }
+    }
+}
+
+@Composable
+private fun BaseImagePanel(
+    image: SelectedImage?,
+    onAdd: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    if (image == null) {
+        OutlinedCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(112.dp)
+                .clickable(onClick = onAdd),
+            shape = RoundedCornerShape(12.dp),
+        ) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Icon(Icons.Default.Image, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Text("选择基础图", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "从相册选择主约束图",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    } else {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            OutlinedCard(
+                modifier = Modifier
+                    .size(104.dp)
+                    .clickable(onClick = onAdd),
+                shape = RoundedCornerShape(12.dp),
+            ) {
+                androidx.compose.foundation.Image(
+                    bitmap = image.preview,
+                    contentDescription = image.name,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(image.name, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(
+                    text = "${image.bitmapWidth} × ${image.bitmapHeight} · ${if (image.compressed) "已压缩" else "原始"}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                CompactActionRow {
+                    CompactTextButton(text = "更换", onClick = onAdd)
+                    CompactTextButton(text = "移除", onClick = onRemove)
+                }
+            }
         }
     }
 }
