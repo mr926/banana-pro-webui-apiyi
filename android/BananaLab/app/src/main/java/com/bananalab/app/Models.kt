@@ -82,8 +82,8 @@ data class GenerateResult(
 
 enum class AppTab {
     Generate,
+    Result,
     History,
-    Prompts,
     Settings,
 }
 

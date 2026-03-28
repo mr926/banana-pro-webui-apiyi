@@ -21,6 +21,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +32,7 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -45,6 +47,10 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.rememberScrollState
@@ -138,6 +144,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.AnnotatedString
@@ -523,16 +530,16 @@ private fun AppShell(
                     onClick = { onTabChange(AppTab.Generate) },
                 )
                 BottomNavItem(
+                    selected = state.activeTab == AppTab.Result,
+                    label = "结果",
+                    icon = Icons.Default.Image,
+                    onClick = { onTabChange(AppTab.Result) },
+                )
+                BottomNavItem(
                     selected = state.activeTab == AppTab.History,
                     label = "历史",
                     icon = Icons.Default.History,
                     onClick = { onTabChange(AppTab.History) },
-                )
-                BottomNavItem(
-                    selected = state.activeTab == AppTab.Prompts,
-                    label = "提示词",
-                    icon = Icons.Default.TextSnippet,
-                    onClick = { onTabChange(AppTab.Prompts) },
                 )
                 BottomNavItem(
                     selected = state.activeTab == AppTab.Settings,
@@ -578,6 +585,16 @@ private fun AppShell(
                     onDownloadCurrentResult = onDownloadCurrentResult,
                     onLoadRemoteBitmap = onLoadRemoteBitmap,
                 )
+                AppTab.Result -> ResultScreen(
+                    state = state,
+                    onRetryGeneration = onRetryGeneration,
+                    onCopyText = onCopyText,
+                    onImageViewer = onImageViewer,
+                    onUseCurrentPrompt = onUseCurrentPrompt,
+                    onSendCurrentResultToBase = onSendCurrentResultToBase,
+                    onSendCurrentResultToReference = onSendCurrentResultToReference,
+                    onDownloadCurrentResult = onDownloadCurrentResult,
+                )
                 AppTab.History -> HistoryScreen(
                     state = state,
                     onRefresh = onRefreshHistory,
@@ -593,8 +610,13 @@ private fun AppShell(
                     onImageViewer = onImageViewer,
                     onLoadRemoteBitmap = onLoadRemoteBitmap,
                 )
-                AppTab.Prompts -> PromptToolsScreen(
+                AppTab.Settings -> SettingsScreen(
                     state = state,
+                    onServerUrlChange = onServerUrlChange,
+                    onApplyServerUrl = onApplyServerUrl,
+                    onLoginPasswordChange = onLoginPasswordChange,
+                    onLogin = onLogin,
+                    onLogout = onLogout,
                     promptLibraryDraft = promptLibraryDraft,
                     onPromptLibraryDraftChange = onPromptLibraryDraftChange,
                     onSavePromptLibrary = onSavePromptLibrary,
@@ -607,14 +629,6 @@ private fun AppShell(
                     onSavePersona = onSavePersona,
                     onDeletePersona = onDeletePersona,
                     onPersonaImport = onPersonaImport,
-                )
-                AppTab.Settings -> SettingsScreen(
-                    state = state,
-                    onServerUrlChange = onServerUrlChange,
-                    onApplyServerUrl = onApplyServerUrl,
-                    onLoginPasswordChange = onLoginPasswordChange,
-                    onLogin = onLogin,
-                    onLogout = onLogout,
                 )
             }
         }
@@ -692,29 +706,34 @@ private fun GenerateScreen(
         item {
             SectionCard(
                 title = "风格参考",
-                subtitle = "横向滑动查看，单张占位更紧凑。",
+                subtitle = "和其他模块保持同宽，图片可横向快速补充。",
                 titleStyle = MaterialTheme.typography.titleSmall,
                 subtitleStyle = MaterialTheme.typography.bodySmall,
             ) {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    item {
-                        ReferenceAddCard(onClick = onReferencePicker)
-                    }
-                    if (state.referenceImages.isEmpty()) {
+                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                         item {
-                            EmptyHint(
-                                text = "还没有参考图。",
-                                modifier = Modifier.size(width = 180.dp, height = 92.dp),
-                                fillWidth = false,
-                            )
+                            ReferenceAddCard(onClick = onReferencePicker)
                         }
-                    } else {
-                        items(state.referenceImages.size) { index ->
-                            ReferenceThumbCard(
-                                image = state.referenceImages[index],
-                                index = index,
-                                onRemove = { onRemoveReferenceImage(index) },
-                            )
+                        if (state.referenceImages.isEmpty()) {
+                            item {
+                                EmptyHint(
+                                    text = "还没有参考图。",
+                                    modifier = Modifier.size(width = maxWidth - 8.dp, height = 92.dp),
+                                    fillWidth = false,
+                                )
+                            }
+                        } else {
+                            items(state.referenceImages.size) { index ->
+                                ReferenceThumbCard(
+                                    image = state.referenceImages[index],
+                                    index = index,
+                                    onRemove = { onRemoveReferenceImage(index) },
+                                )
+                            }
                         }
                     }
                 }
@@ -834,15 +853,40 @@ private fun GenerateScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ResultScreen(
+    state: AppUiState,
+    onRetryGeneration: () -> Unit,
+    onCopyText: (String) -> Unit,
+    onImageViewer: (String) -> Unit,
+    onUseCurrentPrompt: () -> Unit,
+    onSendCurrentResultToBase: () -> Unit,
+    onSendCurrentResultToReference: () -> Unit,
+    onDownloadCurrentResult: () -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 112.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            GenerationStatusBanner(
+                state = state,
+                onRetryGeneration = onRetryGeneration,
+            )
+        }
         item {
             ResultCard(
                 entry = state.currentResult,
                 onCopy = onCopyText,
                 onView = onImageViewer,
+                onUsePrompt = onUseCurrentPrompt,
                 onDownload = onDownloadCurrentResult,
                 onSendToBase = onSendCurrentResultToBase,
                 onSendToReference = onSendCurrentResultToReference,
-                onLoadRemoteBitmap = onLoadRemoteBitmap,
             )
         }
     }
@@ -1147,10 +1191,12 @@ private fun CollapsibleWorkspaceSection(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .animateContentSize(animationSpec = tween(150)),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        modifier = Modifier.animateContentSize(animationSpec = tween(150)),
     ) {
         Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(
@@ -1196,6 +1242,7 @@ private fun CompactActionRow(
     content: @Composable RowScope.() -> Unit,
 ) {
     Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
         content = content,
@@ -1259,6 +1306,7 @@ private fun generationReady(state: AppUiState): Boolean {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun HistoryScreen(
     state: AppUiState,
@@ -1275,54 +1323,91 @@ private fun HistoryScreen(
     onImageViewer: (String) -> Unit,
     onLoadRemoteBitmap: suspend (String) -> ImageBitmap,
 ) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            SectionCard(title = "最近历史", subtitle = "可批量选择、下载、复制提示词，也能回流到基础图或参考图。") {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedButton(onClick = onRefresh) {
-                        Icon(Icons.Default.Refresh, contentDescription = null)
-                        Spacer(Modifier.size(8.dp))
-                        Text("刷新")
+    val columns = historyGridColumns(LocalConfiguration.current.screenWidthDp)
+    var actionEntry by remember { mutableStateOf<HistoryEntry?>(null) }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(columns),
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 112.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item(span = { GridItemSpan(columns) }) {
+                SectionCard(title = "历史相册", subtitle = "按相册方式查看结果；点图查看，长按或勾选可批量处理。") {
+                    ScrollChipRow {
+                        OutlinedButton(onClick = onRefresh) {
+                            Icon(Icons.Default.Refresh, contentDescription = null)
+                            Spacer(Modifier.size(8.dp))
+                            Text("刷新")
+                        }
+                        OutlinedButton(onClick = onSelectAll) { Text("全选") }
+                        OutlinedButton(onClick = onClearSelection) { Text("清空") }
+                        Button(
+                            onClick = onDownloadSelected,
+                            enabled = state.historySelection.isNotEmpty(),
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null)
+                            Spacer(Modifier.size(8.dp))
+                            Text("批量下载")
+                        }
                     }
-                    OutlinedButton(onClick = onSelectAll) { Text("全选") }
-                    OutlinedButton(onClick = onClearSelection) { Text("清空") }
-                    Button(
-                        onClick = onDownloadSelected,
-                        enabled = state.historySelection.isNotEmpty(),
-                    ) {
-                        Icon(Icons.Default.Download, contentDescription = null)
-                        Spacer(Modifier.size(8.dp))
-                        Text("批量下载")
-                    }
+                    Text(
+                        text = "已选择 ${state.historySelection.size} / ${state.history.size} 张",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    text = "已选择 ${state.historySelection.size} / ${state.history.size} 张",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            }
+            if (state.history.isEmpty()) {
+                item(span = { GridItemSpan(columns) }) {
+                    EmptyHint("还没有历史记录，先去生成一张吧。")
+                }
+            } else {
+                items(state.history, key = { it.id }) { entry ->
+                    HistoryAlbumCard(
+                        entry = entry,
+                        selected = state.historySelection.contains(entry.id),
+                        onToggleSelection = { onToggleSelection(entry.id) },
+                        onView = { onImageViewer(preferredImageUrl(entry)) },
+                        onMore = { actionEntry = entry },
+                    )
+                }
             }
         }
-        if (state.history.isEmpty()) {
-            item {
-                EmptyHint("还没有历史记录，先去生成一张吧。")
-            }
-        } else {
-            items(state.history, key = { it.id }) { entry ->
-                HistoryCard(
+
+        actionEntry?.let { entry ->
+            val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+            ModalBottomSheet(
+                onDismissRequest = { actionEntry = null },
+                sheetState = sheetState,
+            ) {
+                HistoryActionSheet(
                     entry = entry,
-                    selected = state.historySelection.contains(entry.id),
-                    onToggleSelection = { onToggleSelection(entry.id) },
-                    onDownload = { onDownloadItem(entry) },
-                    onCopy = { onCopyText(entry.prompt) },
-                    onSendToBase = { onSendToBase(entry) },
-                    onSendToReference = { onSendToReference(entry) },
-                    onDelete = { onDeleteItem(entry.id) },
-                    onView = { onImageViewer(preferredImageUrl(entry)) },
-                    onLoadRemoteBitmap = onLoadRemoteBitmap,
+                    onView = {
+                        onImageViewer(preferredImageUrl(entry))
+                        actionEntry = null
+                    },
+                    onDownload = {
+                        onDownloadItem(entry)
+                        actionEntry = null
+                    },
+                    onCopy = {
+                        onCopyText(entry.prompt)
+                        actionEntry = null
+                    },
+                    onSendToBase = {
+                        onSendToBase(entry)
+                        actionEntry = null
+                    },
+                    onSendToReference = {
+                        onSendToReference(entry)
+                        actionEntry = null
+                    },
+                    onDelete = {
+                        onDeleteItem(entry.id)
+                        actionEntry = null
+                    },
                 )
             }
         }
@@ -1439,6 +1524,18 @@ private fun SettingsScreen(
     onLoginPasswordChange: (String) -> Unit,
     onLogin: () -> Unit,
     onLogout: () -> Unit,
+    promptLibraryDraft: String,
+    onPromptLibraryDraftChange: (String) -> Unit,
+    onSavePromptLibrary: () -> Unit,
+    onPersonaSelect: (String) -> Unit,
+    onPersonaEditorFilename: (String) -> Unit,
+    onPersonaEditorName: (String) -> Unit,
+    onPersonaEditorSummary: (String) -> Unit,
+    onPersonaEditorContent: (String) -> Unit,
+    onNewPersona: () -> Unit,
+    onSavePersona: () -> Unit,
+    onDeletePersona: () -> Unit,
+    onPersonaImport: () -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1490,8 +1587,79 @@ private fun SettingsScreen(
             }
         }
         item {
+            SectionCard(title = "提示词库", subtitle = "原来的提示词页已并入设置；一行一个条目。") {
+                OutlinedTextField(
+                    value = promptLibraryDraft,
+                    onValueChange = onPromptLibraryDraftChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 8,
+                    maxLines = 20,
+                )
+                Button(onClick = onSavePromptLibrary) {
+                    Icon(Icons.Default.Save, contentDescription = null)
+                    Spacer(Modifier.size(8.dp))
+                    Text("保存提示词库")
+                }
+                if (state.promptLibrary.items.isNotEmpty()) {
+                    ScrollChipRow {
+                        state.promptLibrary.items.forEach { item ->
+                            AssistChip(onClick = {}, label = { Text(item) })
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            SectionCard(title = "提示词优化人设", subtitle = "导入、编辑、保存和删除提示词优化人格。") {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(onClick = onNewPersona) {
+                        Text("新建人格")
+                    }
+                    OutlinedButton(onClick = onPersonaImport) {
+                        Icon(Icons.Default.Upload, contentDescription = null)
+                        Spacer(Modifier.size(8.dp))
+                        Text("导入 .md")
+                    }
+                }
+                if (state.personas.isNotEmpty()) {
+                    Text("可用人设", fontWeight = FontWeight.SemiBold)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(state.personas, key = { it.id }) { persona ->
+                            OutlinedCard(
+                                modifier = Modifier
+                                    .widthIn(min = 180.dp)
+                                    .clickable { onPersonaSelect(persona.id) },
+                                colors = CardDefaults.outlinedCardColors(
+                                    containerColor = if (persona.id == state.selectedPersonaId) {
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                    } else {
+                                        MaterialTheme.colorScheme.surface
+                                    },
+                                ),
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(persona.name, fontWeight = FontWeight.SemiBold)
+                                    Text(persona.summary, style = MaterialTheme.typography.bodySmall)
+                                    Text(persona.filename, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
+                PersonaEditor(
+                    editor = state.personaEditor,
+                    onFilenameChange = onPersonaEditorFilename,
+                    onNameChange = onPersonaEditorName,
+                    onSummaryChange = onPersonaEditorSummary,
+                    onContentChange = onPersonaEditorContent,
+                    onSave = onSavePersona,
+                    onDelete = onDeletePersona,
+                )
+            }
+        }
+        item {
             SectionCard(title = "关于", subtitle = "BananaLab 原生 Android 版。") {
-                Text("功能覆盖生成、历史、提示词库、人设管理、提示词优化和批量下载。")
+                Text("功能覆盖生成、结果、历史、服务器连接、提示词库、人设管理、提示词优化和批量下载。")
                 Spacer(Modifier.height(8.dp))
                 Text("如果你想，我后面还可以继续做图标、启动页和更强的本地缓存。", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -1508,6 +1676,7 @@ private fun SectionCard(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Card(
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)),
         shape = RoundedCornerShape(16.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
@@ -1734,62 +1903,171 @@ private fun PromptModeToggle(
 }
 
 @Composable
-private fun HistoryCard(
+private fun HistoryAlbumCard(
     entry: HistoryEntry,
     selected: Boolean,
     onToggleSelection: () -> Unit,
+    onView: () -> Unit,
+    onMore: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            RemoteGridThumb(
+                url = preferredThumbUrl(entry).ifBlank { preferredImageUrl(entry) },
+                contentDescription = entry.prompt,
+                onClick = onView,
+                onLongClick = onToggleSelection,
+            )
+            Column(
+                modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Row(verticalAlignment = Alignment.Top) {
+                    Checkbox(
+                        checked = selected,
+                        onCheckedChange = { onToggleSelection() },
+                    )
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(top = 5.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Text(
+                            text = entry.createdAt,
+                            fontWeight = FontWeight.SemiBold,
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                        )
+                        Text(
+                            text = "${entry.aspectRatio} · ${entry.imageSize}",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                        )
+                    }
+                    IconButton(
+                        onClick = onMore,
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "更多操作")
+                    }
+                }
+                Text(
+                    text = entry.prompt.ifBlank { "未填写提示词" },
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HistoryActionSheet(
+    entry: HistoryEntry,
+    onView: () -> Unit,
     onDownload: () -> Unit,
     onCopy: () -> Unit,
     onSendToBase: () -> Unit,
     onSendToReference: () -> Unit,
     onDelete: () -> Unit,
-    onView: () -> Unit,
-    onLoadRemoteBitmap: suspend (String) -> ImageBitmap,
 ) {
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)),
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = selected, onCheckedChange = { onToggleSelection() })
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(entry.createdAt, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        text = "${entry.aspectRatio} · ${entry.imageSize} · ${if (entry.promptMode == "optimized") "AI 翻译优化" else "直接输入"}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                }
-                if (entry.ossUploadError?.isNotBlank() == true) {
-                    Badge { Text("OSS") }
-                }
-            }
-            RemoteThumb(
-                url = preferredThumbUrl(entry).ifBlank { preferredImageUrl(entry) },
-                contentDescription = entry.prompt,
-                onClick = onView,
-                onLongClick = onDownload,
-                height = 96.dp,
-            )
-            Text(
-                text = entry.prompt.ifBlank { "未填写提示词" },
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 2,
-            )
-            FlowButtons {
-                CompactTextButton(text = "查看", onClick = onView)
-                CompactTextButton(text = "下载", onClick = onDownload, icon = Icons.Default.Download)
-                CompactTextButton(text = "复制", onClick = onCopy, icon = Icons.Default.ContentCopy)
-                CompactTextButton(text = "送基础图", onClick = onSendToBase)
-                CompactTextButton(text = "送参考图", onClick = onSendToReference)
-                TextButton(onClick = onDelete, modifier = Modifier.heightIn(min = 32.dp)) {
-                    Icon(Icons.Default.Delete, contentDescription = null)
-                    Spacer(Modifier.size(6.dp))
-                    Text("删除", style = MaterialTheme.typography.labelSmall)
-                }
-            }
+        Text(text = entry.createdAt, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text(
+            text = entry.prompt.ifBlank { "未填写提示词" },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedButton(onClick = onView, modifier = Modifier.fillMaxWidth()) {
+            Text("查看大图")
         }
+        OutlinedButton(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
+            Text("下载")
+        }
+        OutlinedButton(onClick = onCopy, modifier = Modifier.fillMaxWidth()) {
+            Text("复制提示词")
+        }
+        OutlinedButton(onClick = onSendToBase, modifier = Modifier.fillMaxWidth()) {
+            Text("送到基础图")
+        }
+        OutlinedButton(onClick = onSendToReference, modifier = Modifier.fillMaxWidth()) {
+            Text("送到参考图")
+        }
+        Button(
+            onClick = onDelete,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+                contentColor = MaterialTheme.colorScheme.onErrorContainer,
+            ),
+        ) {
+            Text("删除")
+        }
+    }
+}
+
+@Composable
+private fun RemoteGridThumb(
+    url: String,
+    contentDescription: String,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
+) {
+    val context = LocalContext.current
+    val loaded = remember(url) { mutableStateOf(false) }
+    val alpha by animateFloatAsState(targetValue = if (loaded.value) 1f else 0f, label = "remote-grid-thumb-alpha")
+    val request = remember(url) {
+        ImageRequest.Builder(context)
+            .data(url)
+            .build()
+    }
+    OutlinedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick,
+            ),
+        shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = 12.dp, bottomEnd = 12.dp),
+    ) {
+        SubcomposeAsyncImage(
+            model = request,
+            contentDescription = contentDescription,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop,
+            loading = {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp))
+                }
+            },
+            success = {
+                LaunchedEffect(url) {
+                    loaded.value = true
+                }
+                SubcomposeAsyncImageContent(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer(alpha = alpha),
+                )
+            },
+            error = {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("加载失败", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+        )
     }
 }
 
@@ -1798,12 +2076,12 @@ private fun ResultCard(
     entry: HistoryEntry?,
     onCopy: (String) -> Unit,
     onView: (String) -> Unit,
+    onUsePrompt: () -> Unit,
     onDownload: () -> Unit,
     onSendToBase: () -> Unit,
     onSendToReference: () -> Unit,
-    onLoadRemoteBitmap: suspend (String) -> ImageBitmap,
 ) {
-    SectionCard(title = "当前结果", subtitle = "生成完成后显示在这里。") {
+    SectionCard(title = "当前结果", subtitle = "生成完成后会稳定显示在这里。") {
         if (entry == null) {
             EmptyHint("还没有结果。")
         } else {
@@ -1812,17 +2090,25 @@ private fun ResultCard(
                 contentDescription = entry.prompt,
                 onClick = { onView(preferredImageUrl(entry)) },
                 onLongClick = onDownload,
-                height = 280.dp,
+                height = 320.dp,
             )
-            Text(entry.prompt.ifBlank { "未填写提示词" }, style = MaterialTheme.typography.bodySmall, maxLines = 3)
+            Text(entry.prompt.ifBlank { "未填写提示词" }, style = MaterialTheme.typography.bodySmall, maxLines = 4)
             CompactActionRow {
                 CompactTextButton(text = "复制", onClick = { onCopy(entry.prompt) }, icon = Icons.Default.ContentCopy)
                 CompactTextButton(text = "下载", onClick = onDownload, icon = Icons.Default.Download)
+                CompactTextButton(text = "带回提示词", onClick = onUsePrompt)
                 CompactTextButton(text = "送基础图", onClick = onSendToBase)
                 CompactTextButton(text = "送参考图", onClick = onSendToReference)
             }
         }
     }
+}
+
+private fun historyGridColumns(screenWidthDp: Int): Int = when {
+    screenWidthDp >= 1100 -> 6
+    screenWidthDp >= 900 -> 5
+    screenWidthDp >= 720 -> 4
+    else -> 3
 }
 
 @Composable

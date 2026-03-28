@@ -218,6 +218,30 @@ docker run -d \
 
 当代码推送到 `main` 分支时，GitHub 会自动构建镜像并推送到 Docker Hub 仓库 `mr926/banana-pro-webui-apiyi`。
 
+## iOS 原生客户端
+
+项目里已经生成了一个新的 iOS 原生客户端工程，位置在：
+
+- [`ios/BananaLab/BananaLab.xcodeproj`](/Users/chao/docker/banana/banana-pro-webui-apiyi/ios/BananaLab/BananaLab.xcodeproj)
+
+说明：
+
+- 使用 `SwiftUI + MVVM`
+- 目标平台是最新 iOS 版本，并且支持 iPad
+- 默认服务器地址和会话恢复都已接好
+- 图片选择走相册，历史图支持 OSS 优先加载与下载
+- 生成成功/失败会触发系统通知
+
+打包测试时，用 Xcode 打开这个工程，选择对应的 `iPhone` 或 `iPad` 设备/模拟器后直接运行即可。如果要在真机上安装测试包，再去 Xcode 里补签名团队和证书。
+
+## Android 原生版
+
+原生 Android 工程已经开始放在：
+
+- `android/BananaLab`
+
+它会继续沿用当前后端接口，目标是做成 `BananaLab` 原生 App。
+
 使用前需要先在 GitHub 仓库的 `Settings -> Secrets and variables -> Actions` 中添加：
 
 - `DOCKERHUB_USERNAME`: 你的 Docker Hub 用户名

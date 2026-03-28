@@ -8,8 +8,10 @@ import mimetypes
 import os
 import re
 import secrets
+import socket
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -17,6 +19,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from datetime import datetime
 from email.utils import formatdate
+from http import client as http_client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -45,6 +48,8 @@ DEFAULT_PROMPT_OPTIMIZER_MODEL = "gpt-5.4"
 DEFAULT_PORT = 8787
 TIMEOUT_MAP = {"1K": 180, "2K": 300, "4K": 360}
 PROMPT_OPTIMIZER_TIMEOUT = 90
+UPSTREAM_MAX_ATTEMPTS = 2
+RETRYABLE_UPSTREAM_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 SESSION_COOKIE_NAME = "banana_ui_session"
 SESSIONS: Dict[str, bool] = {}
 THUMB_MAX_EDGE = 480
@@ -115,6 +120,77 @@ def build_authenticated_request(api_url: str, body: bytes, api_key: str) -> urll
         headers["Authorization"] = f"Bearer {api_key}"
 
     return urllib.request.Request(request_url, data=body, headers=headers, method="POST")
+
+
+class UpstreamHttpError(Exception):
+    def __init__(self, status_code: int, details: str):
+        super().__init__(details)
+        self.status_code = status_code
+        self.details = details
+
+
+def is_retryable_upstream_exception(exc: Exception) -> bool:
+    retryable = (
+        socket.timeout,
+        TimeoutError,
+        ConnectionAbortedError,
+        ConnectionResetError,
+        BrokenPipeError,
+        http_client.RemoteDisconnected,
+    )
+    if isinstance(exc, retryable):
+        return True
+    if isinstance(exc, urllib.error.URLError):
+        reason = exc.reason
+        return isinstance(reason, retryable + (OSError,))
+    return False
+
+
+def describe_upstream_exception(exc: Exception) -> str:
+    if isinstance(exc, urllib.error.URLError):
+        reason = exc.reason
+        if isinstance(reason, BaseException):
+            detail = str(reason).strip()
+            if "Software caused connection abort" in detail:
+                return (
+                    "上游连接被中断（Software caused connection abort）。"
+                    "这通常是网络抖动、代理异常或上游服务主动断开导致的，请重试；"
+                    "如果持续出现，请检查 BANANA_PRO_API_URL 对应服务是否稳定。"
+                )
+            if detail:
+                return f"{reason.__class__.__name__}: {detail}"
+        return f"URLError: {str(exc).strip() or '上游连接失败。'}"
+
+    detail = str(exc).strip()
+    if "Software caused connection abort" in detail:
+        return (
+            "上游连接被中断（Software caused connection abort）。"
+            "这通常是网络抖动、代理异常或上游服务主动断开导致的，请重试；"
+            "如果持续出现，请检查 BANANA_PRO_API_URL 对应服务是否稳定。"
+        )
+    if detail:
+        return f"{exc.__class__.__name__}: {detail}"
+    return exc.__class__.__name__
+
+
+def post_json_to_upstream(api_url: str, body: bytes, api_key: str, timeout: int) -> dict:
+    attempts = max(1, UPSTREAM_MAX_ATTEMPTS)
+    for attempt in range(1, attempts + 1):
+        request = build_authenticated_request(api_url, body, api_key)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            if attempt < attempts and exc.code in RETRYABLE_UPSTREAM_STATUS_CODES:
+                time.sleep(min(0.8 * attempt, 1.6))
+                continue
+            raise UpstreamHttpError(exc.code, raw) from exc
+        except Exception as exc:
+            if attempt < attempts and is_retryable_upstream_exception(exc):
+                time.sleep(min(0.8 * attempt, 1.6))
+                continue
+            raise RuntimeError(describe_upstream_exception(exc)) from exc
 
 
 def normalize_oss_prefix(prefix: str) -> str:
@@ -1352,17 +1428,19 @@ class AppHandler(BaseHTTPRequestHandler):
 
         try:
             body = json.dumps(payload).encode("utf-8")
-            request = build_authenticated_request(api_url, body, api_key)
-            with urllib.request.urlopen(request, timeout=TIMEOUT_MAP.get(image_size, 300)) as response:
-                response_payload = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            raw = exc.read().decode("utf-8", errors="replace")
+            response_payload = post_json_to_upstream(
+                api_url=api_url,
+                body=body,
+                api_key=api_key,
+                timeout=TIMEOUT_MAP.get(image_size, 300),
+            )
+        except UpstreamHttpError as exc:
             return json_response(
                 self,
-                exc.code,
+                exc.status_code,
                 {
                     "error": "上游接口返回错误。",
-                    "details": raw,
+                    "details": exc.details,
                 },
             )
         except Exception as exc:
@@ -1566,19 +1644,21 @@ class AppHandler(BaseHTTPRequestHandler):
 
         request_payload = build_prompt_optimizer_payload(prompt, persona["content"], llm_model)
         request_body = json.dumps(request_payload).encode("utf-8")
-        request = build_authenticated_request(api_url, request_body, api_key)
 
         try:
-            with urllib.request.urlopen(request, timeout=PROMPT_OPTIMIZER_TIMEOUT) as response:
-                response_payload = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            raw = exc.read().decode("utf-8", errors="replace")
+            response_payload = post_json_to_upstream(
+                api_url=api_url,
+                body=request_body,
+                api_key=api_key,
+                timeout=PROMPT_OPTIMIZER_TIMEOUT,
+            )
+        except UpstreamHttpError as exc:
             return json_response(
                 self,
-                exc.code,
+                exc.status_code,
                 {
                     "error": "上游提示词优化接口返回错误。",
-                    "details": raw,
+                    "details": exc.details,
                 },
             )
         except Exception as exc:
