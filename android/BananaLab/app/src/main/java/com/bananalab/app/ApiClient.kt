@@ -41,8 +41,8 @@ class BananaLabApi(
     private val client: OkHttpClient = OkHttpClient.Builder()
         .cookieJar(cookieJar)
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(180, TimeUnit.SECONDS)
-        .writeTimeout(180, TimeUnit.SECONDS)
+        .readTimeout(480, TimeUnit.SECONDS)
+        .writeTimeout(480, TimeUnit.SECONDS)
         .build()
 
     fun updateServerUrl(serverUrl: String) {

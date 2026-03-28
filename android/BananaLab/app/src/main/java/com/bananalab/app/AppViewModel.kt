@@ -495,6 +495,7 @@ class BananaLabViewModel(application: Application) : AndroidViewModel(applicatio
     fun generate() {
         val request = buildGenerationRequest() ?: return
         lastGenerationRequest = request
+        setActiveTab(AppTab.Result)
         executeGeneration(request)
     }
 
@@ -956,6 +957,7 @@ class BananaLabViewModel(application: Application) : AndroidViewModel(applicatio
         val prompt = _state.value.currentResult?.prompt.orEmpty()
         if (prompt.isNotBlank()) {
             setPromptText(prompt)
+            setActiveTab(AppTab.Generate)
         }
     }
 
