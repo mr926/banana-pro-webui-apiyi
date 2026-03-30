@@ -119,6 +119,53 @@ function formatFileSize(bytes) {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
+function extractErrorMessage(value) {
+  if (typeof value === "string") {
+    const text = value.trim();
+    return text || null;
+  }
+
+  if (Array.isArray(value)) {
+    const messages = value
+      .map((item) => extractErrorMessage(item))
+      .filter(Boolean);
+    return messages.length > 0 ? messages.join("；") : null;
+  }
+
+  if (value && typeof value === "object") {
+    const directKeys = ["message", "error", "detail", "details", "msg", "reason"];
+    for (const key of directKeys) {
+      const message = extractErrorMessage(value[key]);
+      if (message) {
+        return message;
+      }
+    }
+
+    for (const nested of Object.values(value)) {
+      const message = extractErrorMessage(nested);
+      if (message) {
+        return message;
+      }
+    }
+
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+function getPayloadErrorMessage(payload, fallback) {
+  return (
+    extractErrorMessage(payload?.details) ||
+    extractErrorMessage(payload?.error) ||
+    fallback
+  );
+}
+
 async function copyTextToClipboard(text) {
   if (navigator.clipboard?.writeText && window.isSecureContext) {
     await navigator.clipboard.writeText(text);
@@ -933,7 +980,7 @@ function syncSubmitButtonState() {
   if (state.progressTimer) return;
 
   const promptMode = getPromptMode();
-  const canSubmit = state.baseImageFile && (promptMode === "optimized" ? hasOptimizedPrompt() : true);
+  const canSubmit = state.baseImageFile && (promptMode === "optimized" ? hasOptimizedPrompt() : hasSourcePrompt());
   submitButton.disabled = !canSubmit;
 }
 
@@ -1438,7 +1485,7 @@ async function deleteHistoryItem(id, clearCurrent = false) {
     const response = await fetch(`/api/history/${id}`, { method: "DELETE" });
     const payload = await readJsonSafely(response);
     if (!response.ok) {
-      throw new Error(payload.details || payload.error || "删除失败");
+      throw new Error(getPayloadErrorMessage(payload, "删除失败"));
     }
     if (clearCurrent) {
       renderCurrentResult(null);
@@ -1639,7 +1686,7 @@ async function optimizePrompt() {
       throw new Error("当前服务还没有加载提示词优化接口，请重启服务后再试。");
     }
     if (!response.ok) {
-      throw new Error(payload.details || payload.error || "提示词优化失败");
+      throw new Error(getPayloadErrorMessage(payload, "提示词优化失败"));
     }
 
     state.optimizedPrompt = payload.prompt || "";
@@ -1746,6 +1793,7 @@ promptTextarea?.addEventListener("input", () => {
   if (getPromptMode() === "optimized") {
     resetOptimizedPrompt();
   }
+  syncSubmitButtonState();
 });
 
 promptPersonaSelect?.addEventListener("change", () => {
@@ -1790,6 +1838,10 @@ form.addEventListener("submit", async (event) => {
       syncSubmitButtonState();
       return;
     }
+  } else if (!finalPrompt) {
+    setStatus("请先输入提示词。", true);
+    syncSubmitButtonState();
+    return;
   }
 
   submitButton.disabled = true;
@@ -1819,7 +1871,7 @@ form.addEventListener("submit", async (event) => {
     clearProgress();
 
     if (!response.ok) {
-      throw new Error(payload.details || payload.error || "生成失败");
+      throw new Error(getPayloadErrorMessage(payload, "生成失败"));
     }
 
     setStatus("生成完成，可以直接下载，也会自动保留到历史记录。");

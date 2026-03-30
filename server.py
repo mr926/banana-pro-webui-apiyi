@@ -764,6 +764,24 @@ def map_output_size(size_key: str) -> str:
     return mapping.get(size_key.upper(), "4K")
 
 
+def resolve_image_generation_api_url(api_url: str) -> str:
+    parsed = urlparse(str(api_url or "").strip())
+    path = parsed.path.rstrip("/")
+    if path == "/v1/draw/nano-banana":
+        # This app sends Gemini official payloads. Some providers expose a native
+        # draw endpoint at /v1/draw/nano-banana that expects a top-level prompt
+        # field, but the same host also supports Gemini-compatible paths.
+        return urlunparse(
+            parsed._replace(
+                path="/v1beta/models/gemini-2.5-flash-image:generateContent",
+                params="",
+                query="",
+                fragment="",
+            )
+        )
+    return api_url
+
+
 def build_prompt(user_prompt: str, reference_count: int) -> str:
     base = "你将收到一张基础结构图作为主要约束，请严格保留基础图的主体构图、空间关系和关键结构。"
     if reference_count > 0:
@@ -1364,6 +1382,7 @@ class AppHandler(BaseHTTPRequestHandler):
     def handle_generate(self) -> None:
         api_key = get_setting("BANANA_PRO_API_KEY")
         api_url = get_setting("BANANA_PRO_API_URL", DEFAULT_API_URL)
+        resolved_api_url = resolve_image_generation_api_url(api_url)
 
         if Image is None:
             return json_response(
@@ -1402,6 +1421,9 @@ class AppHandler(BaseHTTPRequestHandler):
         image_size = map_output_size(form.get("imageSize", "4K"))
         enable_search = form.get("enableSearch", "false").lower() == "true"
 
+        if not str(prompt).strip():
+            return json_response(self, 400, {"error": "提示词不能为空，请先输入提示词。"})
+
         base_upload = form.get("baseImage")
         if not isinstance(base_upload, dict):
             return json_response(self, 400, {"error": "基础图为必填项。"})
@@ -1429,7 +1451,7 @@ class AppHandler(BaseHTTPRequestHandler):
         try:
             body = json.dumps(payload).encode("utf-8")
             response_payload = post_json_to_upstream(
-                api_url=api_url,
+                api_url=resolved_api_url,
                 body=body,
                 api_key=api_key,
                 timeout=TIMEOUT_MAP.get(image_size, 300),
