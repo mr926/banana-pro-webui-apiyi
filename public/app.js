@@ -10,6 +10,11 @@ const resultMeta = document.getElementById("result-meta");
 const historyList = document.getElementById("history-list");
 const historyTemplate = document.getElementById("history-item-template");
 const refreshHistoryButton = document.getElementById("refresh-history");
+const historyPagination = document.getElementById("history-pagination");
+const historyPaginationSummary = document.getElementById("history-pagination-summary");
+const historyPageInfo = document.getElementById("history-page-info");
+const historyPrevPageButton = document.getElementById("history-prev-page");
+const historyNextPageButton = document.getElementById("history-next-page");
 const progressTemplate = document.getElementById("progress-template");
 const authOverlay = document.getElementById("auth-overlay");
 const loginForm = document.getElementById("login-form");
@@ -60,6 +65,10 @@ const state = {
   optimizeProgressValue: 0,
   notificationPermissionPromise: null,
   historyHydrated: false,
+  historyPage: 1,
+  historyPageSize: 6,
+  historyTotal: 0,
+  historyTotalPages: 0,
   audioContext: null,
   authenticated: false,
   passwordEnabled: false,
@@ -102,7 +111,7 @@ const BASE_IMAGE_MAX_LONG_EDGE = 4000;
 const BASE_IMAGE_QUALITY = 0.85;
 const REFERENCE_IMAGE_MAX_BYTES = 2 * MB;
 const REFERENCE_IMAGE_LIMIT = 6;
-const HISTORY_PREVIEW_LIMIT = 6;
+const HISTORY_PAGE_SIZE = 6;
 const IMAGE_TRANSFER_QUEUE_KEY = "banana-pro-image-transfer-queue";
 const DEFAULT_PAGE_TITLE = document.title;
 
@@ -1553,7 +1562,7 @@ function finishOptimizeProgress(message = "优化完成") {
 }
 
 function renderHistory(items) {
-  const latestItems = Array.isArray(items) ? items.slice(0, HISTORY_PREVIEW_LIMIT) : [];
+  const latestItems = Array.isArray(items) ? items : [];
   historyList.innerHTML = "";
 
   if (latestItems.length === 0) {
@@ -1628,6 +1637,43 @@ function renderHistory(items) {
   });
 }
 
+function syncHistoryPagination() {
+  const total = Math.max(0, Number(state.historyTotal || 0));
+  const totalPages = Math.max(0, Number(state.historyTotalPages || 0));
+  const currentPage = Math.max(1, Number(state.historyPage || 1));
+  const hasItems = total > 0;
+
+  historyPagination?.classList.toggle("hidden", !hasItems);
+
+  if (historyPaginationSummary) {
+    historyPaginationSummary.textContent = hasItems ? `共 ${total} 条历史记录` : "";
+  }
+  if (historyPageInfo) {
+    historyPageInfo.textContent = hasItems ? `第 ${currentPage} / ${Math.max(totalPages, 1)} 页` : "";
+  }
+  if (historyPrevPageButton) {
+    historyPrevPageButton.disabled = !hasItems || currentPage <= 1;
+  }
+  if (historyNextPageButton) {
+    historyNextPageButton.disabled = !hasItems || currentPage >= totalPages;
+  }
+}
+
+function resetHistoryPagination() {
+  state.historyHydrated = false;
+  state.historyPage = 1;
+  state.historyTotal = 0;
+  state.historyTotalPages = 0;
+  syncHistoryPagination();
+}
+
+function buildHistoryRequestUrl(page = state.historyPage) {
+  const params = new URLSearchParams();
+  params.set("page", String(Math.max(1, Number(page) || 1)));
+  params.set("pageSize", String(state.historyPageSize || HISTORY_PAGE_SIZE));
+  return `/api/history?${params.toString()}`;
+}
+
 async function deleteHistoryItem(id, clearCurrent = false) {
   try {
     const response = await fetch(`/api/history/${id}`, { method: "DELETE" });
@@ -1639,29 +1685,46 @@ async function deleteHistoryItem(id, clearCurrent = false) {
       renderCurrentResult(null);
     }
     setStatus("图片已删除。");
-    await loadHistory();
+    await loadHistory(state.historyPage);
   } catch (error) {
     const message = error instanceof Error ? error.message : "删除失败";
     setStatus(message, true);
   }
 }
 
-async function loadHistory() {
+async function loadHistory(page = state.historyPage) {
+  const targetPage = Math.max(1, Number(page) || 1);
   try {
-    const response = await fetch("/api/history");
+    const response = await fetch(buildHistoryRequestUrl(targetPage));
     if (response.status === 401) {
       setAuthUI(false, true);
       historyList.innerHTML = `<div class="empty-history">登录后可查看历史记录。</div>`;
+      resetHistoryPagination();
       return;
     }
-    const payload = await response.json();
-    renderHistory(payload.items || []);
-    if (!state.historyHydrated && !state.currentResult && payload.items && payload.items[0]) {
-      renderCurrentResult(payload.items[0]);
+    const payload = await readJsonSafely(response);
+    if (!response.ok) {
+      throw new Error(getPayloadErrorMessage(payload, "历史记录加载失败。"));
+    }
+
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    state.historyPage = Math.max(1, Number(payload.page || targetPage || 1));
+    state.historyTotal = Math.max(0, Number(payload.total || 0));
+    state.historyTotalPages = Math.max(
+      0,
+      Number(payload.totalPages || (items.length > 0 ? 1 : 0)),
+    );
+
+    renderHistory(items);
+    syncHistoryPagination();
+
+    if (!state.historyHydrated && !state.currentResult && state.historyPage === 1 && items[0]) {
+      renderCurrentResult(items[0]);
     }
     state.historyHydrated = true;
   } catch (error) {
     historyList.innerHTML = `<div class="empty-history">历史记录加载失败，请刷新重试。</div>`;
+    resetHistoryPagination();
   }
 }
 
@@ -2077,7 +2140,7 @@ form.addEventListener("submit", async (event) => {
     sendBrowserNotification("Banana Pro 图片生成成功", "图片已经生成完成，可以回到页面查看和下载。");
     startTitleFlash("生成成功");
     renderCurrentResult(payload);
-    await loadHistory();
+    await loadHistory(1);
   } catch (error) {
     clearProgress();
     const message = error instanceof Error ? error.message : "生成失败";
@@ -2092,7 +2155,19 @@ form.addEventListener("submit", async (event) => {
   }
 });
 
-refreshHistoryButton.addEventListener("click", loadHistory);
+refreshHistoryButton.addEventListener("click", () => {
+  void loadHistory(1);
+});
+
+historyPrevPageButton?.addEventListener("click", () => {
+  if (state.historyPage <= 1) return;
+  void loadHistory(state.historyPage - 1);
+});
+
+historyNextPageButton?.addEventListener("click", () => {
+  if (state.historyPage >= state.historyTotalPages) return;
+  void loadHistory(state.historyPage + 1);
+});
 
 promptLibrarySelect?.addEventListener("change", () => {
   const index = Number(promptLibrarySelect.value);
@@ -2217,6 +2292,7 @@ logoutButton.addEventListener("click", async () => {
     renderPromptLibraryOptions();
     renderPromptPersonaOptions();
     historyList.innerHTML = `<div class="empty-history">登录后可查看历史记录。</div>`;
+    resetHistoryPagination();
     renderCurrentResult(null);
     setAuthUI(false, true);
   }
@@ -2237,10 +2313,12 @@ async function bootstrap() {
     } else {
       resetApiPlatforms("登录后加载 API 平台配置。");
       historyList.innerHTML = `<div class="empty-history">登录后可查看历史记录。</div>`;
+      resetHistoryPagination();
     }
   } catch (error) {
     resetApiPlatforms("API 平台配置初始化失败。");
     historyList.innerHTML = `<div class="empty-history">初始化失败，请刷新重试。</div>`;
+    resetHistoryPagination();
   }
 
   syncSubmitButtonState();

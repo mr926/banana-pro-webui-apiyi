@@ -60,6 +60,8 @@ SESSION_COOKIE_NAME = "banana_ui_session"
 SESSIONS: Dict[str, bool] = {}
 THUMB_MAX_EDGE = 480
 THUMB_JPEG_QUALITY = 72
+DEFAULT_HISTORY_PAGE_SIZE = 60
+MAX_HISTORY_PAGE_SIZE = 200
 
 
 def ensure_dirs() -> None:
@@ -686,7 +688,26 @@ def write_history(items: List[dict]) -> None:
 def append_history(entry: dict) -> None:
     history = read_history()
     history.insert(0, entry)
-    write_history(history[:60])
+    write_history(history)
+
+
+def parse_positive_int(
+    value: Optional[str],
+    default: int,
+    *,
+    minimum: int = 1,
+    maximum: Optional[int] = None,
+) -> int:
+    try:
+        parsed = int(str(value or "").strip())
+    except (TypeError, ValueError):
+        return default
+
+    if parsed < minimum:
+        return default
+    if maximum is not None:
+        parsed = min(parsed, maximum)
+    return parsed
 
 
 def get_thumbnail_filename(item_id: str) -> str:
@@ -780,6 +801,46 @@ def read_history_with_thumbnails() -> List[dict]:
     if changed:
         write_history(result)
     return result
+
+
+def build_history_response_payload(query_string: str = "") -> dict:
+    history = read_history_with_thumbnails()
+    total = len(history)
+    query = dict(parse_qsl(query_string, keep_blank_values=True))
+    paginated = any(key in query for key in ("page", "pageSize", "page_size"))
+
+    if not paginated:
+        return {
+            "items": history,
+            "total": total,
+            "page": 1,
+            "pageSize": total if total > 0 else 0,
+            "totalPages": 1 if total > 0 else 0,
+            "hasMore": False,
+            "paginated": False,
+        }
+
+    page_size_raw = query.get("pageSize") if "pageSize" in query else query.get("page_size")
+    page_size = parse_positive_int(
+        page_size_raw,
+        DEFAULT_HISTORY_PAGE_SIZE,
+        maximum=MAX_HISTORY_PAGE_SIZE,
+    )
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+    page = parse_positive_int(query.get("page"), 1)
+    effective_page = min(page, total_pages or 1)
+    start = (effective_page - 1) * page_size
+    end = start + page_size
+
+    return {
+        "items": history[start:end],
+        "total": total,
+        "page": effective_page,
+        "pageSize": page_size,
+        "totalPages": total_pages,
+        "hasMore": total_pages > 0 and effective_page < total_pages,
+        "paginated": True,
+    }
 
 
 def delete_history_item(item_id: str) -> Optional[dict]:
@@ -1399,7 +1460,16 @@ class AppHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 return
-            body = json.dumps({"items": read_history_with_thumbnails()}, ensure_ascii=False).encode("utf-8")
+            try:
+                payload = build_history_response_payload(parsed.query)
+            except RuntimeError as exc:
+                body = json.dumps({"error": str(exc)}, ensure_ascii=False).encode("utf-8")
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                return
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -1492,10 +1562,10 @@ class AppHandler(BaseHTTPRequestHandler):
             if not self.ensure_authenticated():
                 return
             try:
-                history = read_history_with_thumbnails()
+                payload = build_history_response_payload(parsed.query)
             except RuntimeError as exc:
                 return json_response(self, 500, {"error": str(exc)})
-            return json_response(self, 200, {"items": history})
+            return json_response(self, 200, payload)
 
         if parsed.path.startswith("/generated/"):
             if not self.ensure_authenticated():

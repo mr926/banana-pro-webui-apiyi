@@ -15,8 +15,8 @@
           <p>集中查看、批量选择和下载历史生成结果。</p>
         </div>
         <div class="brand-actions album-toolbar">
-          <button type="button" id="album-select-all" class="ghost-button">全选</button>
-          <button type="button" id="album-clear-selection" class="ghost-button">清空选择</button>
+          <button type="button" id="album-select-all" class="ghost-button">本页全选</button>
+          <button type="button" id="album-clear-selection" class="ghost-button">清空已选</button>
           <button type="button" id="album-download-selected" class="primary-button">批量下载选中</button>
           <a href="/" class="ghost-button">返回工作台</a>
         </div>
@@ -25,6 +25,14 @@
 
       <main>
         <div id="album-grid" class="album-grid"></div>
+        <div id="album-pagination" class="pagination-bar album-pagination hidden">
+          <span id="album-pagination-summary" class="pagination-summary"></span>
+          <div class="pagination-controls">
+            <button type="button" id="album-prev-page" class="ghost-button">上一页</button>
+            <span id="album-page-info" class="pagination-info"></span>
+            <button type="button" id="album-next-page" class="ghost-button">下一页</button>
+          </div>
+        </div>
       </main>
     </div>
 

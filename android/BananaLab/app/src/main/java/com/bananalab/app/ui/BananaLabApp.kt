@@ -15,7 +15,6 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -85,7 +84,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Badge
-import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -103,9 +101,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedCard
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -168,6 +165,15 @@ import com.bananalab.app.PersonaEditorState
 import com.bananalab.app.PromptMode
 import com.bananalab.app.SelectedImage
 import kotlinx.coroutines.launch
+
+private object UiTokens {
+    val s1 = 8.dp
+    val s2 = 16.dp
+    val s3 = 24.dp
+    val r12 = RoundedCornerShape(12.dp)
+    val r16 = RoundedCornerShape(16.dp)
+    val r20 = RoundedCornerShape(20.dp)
+}
 
 @OptIn(
     ExperimentalMaterial3Api::class,
@@ -253,8 +259,7 @@ fun BananaLabApp(
                     Brush.linearGradient(
                         colors = listOf(
                             MaterialTheme.colorScheme.background,
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
-                            MaterialTheme.colorScheme.secondary.copy(alpha = 0.08f),
+                            MaterialTheme.colorScheme.surface,
                         ),
                     ),
                 ),
@@ -280,6 +285,9 @@ fun BananaLabApp(
                     },
                     onPromptChange = viewModel::setPromptText,
                     onPromptModeChange = viewModel::setPromptMode,
+                    onApiPlatformChange = viewModel::setSelectedApiPlatform,
+                    onImageModelChange = viewModel::setSelectedImageModel,
+                    onRefreshApiPlatforms = viewModel::loadApiPlatforms,
                     onAspectRatioChange = viewModel::setAspectRatio,
                     onImageSizeChange = viewModel::setImageSize,
                     onEnableSearchChange = viewModel::setEnableSearch,
@@ -332,7 +340,7 @@ fun BananaLabApp(
                 hostState = snackbarHostState,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(start = 16.dp, end = 16.dp, bottom = 88.dp),
+                    .padding(start = UiTokens.s2, end = UiTokens.s2, bottom = 88.dp),
             )
 
             imageViewerUrl?.let { url ->
@@ -356,48 +364,50 @@ private fun LoginScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp),
+            .padding(UiTokens.s3),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
     Card(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+            modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
             ),
-            shape = RoundedCornerShape(16.dp),
+            shape = UiTokens.r20,
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
         ) {
             Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.padding(UiTokens.s3),
+                verticalArrangement = Arrangement.spacedBy(UiTokens.s2),
             ) {
                 Text(
                     text = "BananaLab",
-                    style = MaterialTheme.typography.displaySmall,
-                    fontWeight = FontWeight.Black,
+                    style = MaterialTheme.typography.titleLarge,
                 )
                 Text(
                     text = "请输入服务器地址和访问密码后进入工作台。",
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                OutlinedTextField(
+                TextField(
                     value = state.serverUrl,
                     onValueChange = onServerUrlChange,
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("服务器地址") },
                     leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
                     singleLine = true,
+                    shape = UiTokens.r12,
+                    colors = appTextFieldColors(),
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedButton(onClick = onApplyServerUrl) {
+                Row(horizontalArrangement = Arrangement.spacedBy(UiTokens.s2)) {
+                    FilledTonalButton(onClick = onApplyServerUrl) {
                         Text("连接服务器")
                     }
                     TextButton(onClick = onLogin) {
                         Text("使用当前密码登录")
                     }
                 }
-                OutlinedTextField(
+                TextField(
                     value = state.loginPassword,
                     onValueChange = onPasswordChange,
                     modifier = Modifier.fillMaxWidth(),
@@ -408,15 +418,19 @@ private fun LoginScreen(
                         keyboardType = KeyboardType.Password,
                         imeAction = ImeAction.Done,
                     ),
+                    shape = UiTokens.r12,
+                    colors = appTextFieldColors(),
                 )
                 Button(
                     onClick = onLogin,
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !state.loginInProgress,
+                    shape = UiTokens.r16,
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp),
                 ) {
                     if (state.loginInProgress) {
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.size(8.dp))
+                        Spacer(Modifier.size(UiTokens.s1))
                     }
                     Text("进入 BananaLab")
                 }
@@ -441,6 +455,9 @@ private fun AppShell(
     onReferencePicker: () -> Unit,
     onPromptChange: (String) -> Unit,
     onPromptModeChange: (PromptMode) -> Unit,
+    onApiPlatformChange: (String) -> Unit,
+    onImageModelChange: (String) -> Unit,
+    onRefreshApiPlatforms: () -> Unit,
     onAspectRatioChange: (String) -> Unit,
     onImageSizeChange: (String) -> Unit,
     onEnableSearchChange: (Boolean) -> Unit,
@@ -491,7 +508,7 @@ private fun AppShell(
             TopAppBar(
                 title = {
                     Column {
-                        Text("BananaLab", fontWeight = FontWeight.Black)
+                        Text("BananaLab", style = MaterialTheme.typography.titleMedium)
                         Text(
                             text = state.serverUrl.removePrefix("http://").removePrefix("https://").trimEnd('/'),
                             style = MaterialTheme.typography.labelMedium,
@@ -506,7 +523,7 @@ private fun AppShell(
                     )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
                 ),
             )
         },
@@ -519,34 +536,14 @@ private fun AppShell(
             }
         },
         bottomBar = {
-            BottomAppBar(
-                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
                 tonalElevation = 0.dp,
             ) {
-                BottomNavItem(
-                    selected = state.activeTab == AppTab.Generate,
-                    label = "生成",
-                    icon = Icons.Default.AutoAwesome,
-                    onClick = { onTabChange(AppTab.Generate) },
-                )
-                BottomNavItem(
-                    selected = state.activeTab == AppTab.Result,
-                    label = "结果",
-                    icon = Icons.Default.Image,
-                    onClick = { onTabChange(AppTab.Result) },
-                )
-                BottomNavItem(
-                    selected = state.activeTab == AppTab.History,
-                    label = "历史",
-                    icon = Icons.Default.History,
-                    onClick = { onTabChange(AppTab.History) },
-                )
-                BottomNavItem(
-                    selected = state.activeTab == AppTab.Settings,
-                    label = "设置",
-                    icon = Icons.Default.Settings,
-                    onClick = { onTabChange(AppTab.Settings) },
-                )
+                BottomNavItem(selected = state.activeTab == AppTab.Generate, label = "生成", icon = Icons.Default.AutoAwesome, onClick = { onTabChange(AppTab.Generate) })
+                BottomNavItem(selected = state.activeTab == AppTab.Result, label = "结果", icon = Icons.Default.Image, onClick = { onTabChange(AppTab.Result) })
+                BottomNavItem(selected = state.activeTab == AppTab.History, label = "历史", icon = Icons.Default.History, onClick = { onTabChange(AppTab.History) })
+                BottomNavItem(selected = state.activeTab == AppTab.Settings, label = "设置", icon = Icons.Default.Settings, onClick = { onTabChange(AppTab.Settings) })
             }
         },
     ) { padding ->
@@ -565,6 +562,9 @@ private fun AppShell(
                     onReferencePicker = onReferencePicker,
                     onPromptChange = onPromptChange,
                     onPromptModeChange = onPromptModeChange,
+                    onApiPlatformChange = onApiPlatformChange,
+                    onImageModelChange = onImageModelChange,
+                    onRefreshApiPlatforms = onRefreshApiPlatforms,
                     onAspectRatioChange = onAspectRatioChange,
                     onImageSizeChange = onImageSizeChange,
                     onEnableSearchChange = onEnableSearchChange,
@@ -642,6 +642,9 @@ private fun GenerateScreen(
     onReferencePicker: () -> Unit,
     onPromptChange: (String) -> Unit,
     onPromptModeChange: (PromptMode) -> Unit,
+    onApiPlatformChange: (String) -> Unit,
+    onImageModelChange: (String) -> Unit,
+    onRefreshApiPlatforms: () -> Unit,
     onAspectRatioChange: (String) -> Unit,
     onImageSizeChange: (String) -> Unit,
     onEnableSearchChange: (Boolean) -> Unit,
@@ -667,8 +670,8 @@ private fun GenerateScreen(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 112.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(start = UiTokens.s2, top = UiTokens.s2, end = UiTokens.s2, bottom = 112.dp),
+        verticalArrangement = Arrangement.spacedBy(UiTokens.s2),
     ) {
         item {
             SectionCard(
@@ -801,6 +804,12 @@ private fun GenerateScreen(
                 expanded = imageSettingsExpanded.value,
                 onToggle = { imageSettingsExpanded.value = !imageSettingsExpanded.value },
             ) {
+                ApiPlatformSelectorPanel(
+                    state = state,
+                    onApiPlatformChange = onApiPlatformChange,
+                    onImageModelChange = onImageModelChange,
+                    onRefreshApiPlatforms = onRefreshApiPlatforms,
+                )
                 Text(
                     text = "图片比例",
                     style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
@@ -857,6 +866,100 @@ private fun GenerateScreen(
 }
 
 @Composable
+private fun ApiPlatformSelectorPanel(
+    state: AppUiState,
+    onApiPlatformChange: (String) -> Unit,
+    onImageModelChange: (String) -> Unit,
+    onRefreshApiPlatforms: () -> Unit,
+) {
+    val selectedPlatform = state.apiPlatforms.firstOrNull { it.id == state.selectedApiPlatformId }
+
+    Text(
+        text = "API 平台",
+        style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    CompactActionRow {
+        CompactTextButton(
+            text = "刷新平台",
+            onClick = onRefreshApiPlatforms,
+            icon = Icons.Default.Refresh,
+        )
+    }
+
+    when {
+        !state.apiPlatformsLoaded -> {
+            Text(
+                text = "正在读取服务器平台配置...",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
+
+        state.apiPlatforms.isEmpty() -> {
+            EmptyHint("当前服务器还没有可用的 API 平台配置，请先检查 `data/api-platforms.xml`。")
+        }
+
+        else -> {
+            ScrollChipRow {
+                state.apiPlatforms.forEach { platform ->
+                    FilterChip(
+                        selected = platform.id == state.selectedApiPlatformId,
+                        onClick = { onApiPlatformChange(platform.id) },
+                        modifier = Modifier.heightIn(min = 32.dp),
+                        label = { Text(platform.name, style = MaterialTheme.typography.labelSmall) },
+                    )
+                }
+            }
+            Text(
+                text = buildString {
+                    append(selectedPlatform?.name ?: "未选择平台")
+                    if (selectedPlatform != null) {
+                        append(" · ${selectedPlatform.models.size} 个可选模型")
+                    }
+                    append(" · 自动绑定对应接口地址与密钥")
+                },
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+            )
+        }
+    }
+
+    Text(
+        text = "生成模型",
+        style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (selectedPlatform == null) {
+        Text(
+            text = "请先选择一个 API 平台。",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelSmall,
+        )
+    } else {
+        ScrollChipRow {
+            selectedPlatform.models.forEach { model ->
+                FilterChip(
+                    selected = model == state.selectedImageModel,
+                    onClick = { onImageModelChange(model) },
+                    modifier = Modifier.heightIn(min = 32.dp),
+                    label = { Text(model, style = MaterialTheme.typography.labelSmall) },
+                )
+            }
+        }
+        Text(
+            text = if (state.selectedImageModel.isBlank()) {
+                "当前平台还没有可用模型。"
+            } else {
+                "当前模型：${state.selectedImageModel}"
+            },
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+        )
+    }
+}
+
+@Composable
 private fun ResultScreen(
     state: AppUiState,
     onRetryGeneration: () -> Unit,
@@ -869,8 +972,8 @@ private fun ResultScreen(
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 112.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(start = UiTokens.s2, top = UiTokens.s2, end = UiTokens.s2, bottom = 112.dp),
+        verticalArrangement = Arrangement.spacedBy(UiTokens.s2),
     ) {
         item {
             GenerationStatusBanner(
@@ -899,12 +1002,12 @@ private fun BaseImagePanel(
     onRemove: () -> Unit,
 ) {
     if (image == null) {
-        OutlinedCard(
+        Card(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(112.dp)
                 .clickable(onClick = onAdd),
-            shape = RoundedCornerShape(12.dp),
+            shape = UiTokens.r12,
         ) {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -929,11 +1032,11 @@ private fun BaseImagePanel(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.Top,
         ) {
-            OutlinedCard(
+            Card(
                 modifier = Modifier
                     .size(104.dp)
                     .clickable(onClick = onAdd),
-                shape = RoundedCornerShape(12.dp),
+                shape = UiTokens.r12,
             ) {
                 androidx.compose.foundation.Image(
                     bitmap = image.preview,
@@ -988,6 +1091,7 @@ private fun GenerationFab(
                 text = when {
                     state.generationInProgress -> "生成中"
                     ready -> "生成"
+                    state.apiPlatforms.none { it.id == state.selectedApiPlatformId } || state.selectedImageModel.isBlank() -> "先选平台"
                     else -> "缺少条件"
                 },
             )
@@ -1028,7 +1132,7 @@ private fun GenerationStatusBanner(
     when {
         state.generationInProgress -> {
             Card(
-                shape = RoundedCornerShape(12.dp),
+                shape = UiTokens.r12,
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)),
             ) {
                 Row(
@@ -1059,7 +1163,7 @@ private fun GenerationStatusBanner(
         }
         state.generationRetryAvailable && state.errorMessage.isNotBlank() -> {
             Card(
-                shape = RoundedCornerShape(12.dp),
+                shape = UiTokens.r12,
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.75f)),
             ) {
                 Row(
@@ -1095,7 +1199,7 @@ private fun GenerationStatusBanner(
         }
         state.currentResult != null -> {
             Card(
-                shape = RoundedCornerShape(12.dp),
+                shape = UiTokens.r12,
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)),
             ) {
                 Row(
@@ -1138,12 +1242,11 @@ private fun PromptEditor(
         color = MaterialTheme.colorScheme.onSurface,
     )
     Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = Color(0xFFF5F5F5),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+        shape = UiTokens.r16,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f),
     ) {
         Row(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.padding(UiTokens.s2),
             verticalAlignment = Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -1194,11 +1297,11 @@ private fun CollapsibleWorkspaceSection(
         modifier = Modifier
             .fillMaxWidth()
             .animateContentSize(animationSpec = tween(150)),
-        shape = RoundedCornerShape(16.dp),
+        shape = UiTokens.r16,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
     ) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(modifier = Modifier.padding(UiTokens.s2), verticalArrangement = Arrangement.spacedBy(UiTokens.s1)) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1229,7 +1332,7 @@ private fun CollapsibleWorkspaceSection(
                 enter = fadeIn(animationSpec = tween(150)) + expandVertically(animationSpec = tween(150)),
                 exit = fadeOut(animationSpec = tween(150)) + shrinkVertically(animationSpec = tween(150)),
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(UiTokens.s1)) {
                     content()
                 }
             }
@@ -1256,11 +1359,12 @@ private fun CompactTextButton(
     enabled: Boolean = true,
     icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
 ) {
-    OutlinedButton(
+    FilledTonalButton(
         onClick = onClick,
         enabled = enabled,
-        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-        modifier = Modifier.heightIn(min = 32.dp),
+        contentPadding = PaddingValues(horizontal = UiTokens.s2, vertical = UiTokens.s1),
+        modifier = Modifier.heightIn(min = 40.dp),
+        shape = UiTokens.r12,
     ) {
         if (icon != null) {
             Icon(icon, contentDescription = null)
@@ -1274,12 +1378,12 @@ private fun CompactTextButton(
 private fun ReferenceAddCard(
     onClick: () -> Unit,
 ) {
-    OutlinedCard(
+    Card(
         modifier = Modifier
             .size(92.dp)
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.75f)),
+        shape = UiTokens.r12,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f)),
     ) {
         Box(
             modifier = Modifier.fillMaxSize(),
@@ -1300,6 +1404,8 @@ private fun ReferenceAddCard(
 private fun generationReady(state: AppUiState): Boolean {
     if (state.generationInProgress) return false
     if (state.baseImage == null) return false
+    if (state.apiPlatforms.none { it.id == state.selectedApiPlatformId }) return false
+    if (state.selectedApiPlatformId.isBlank() || state.selectedImageModel.isBlank()) return false
     return when (state.promptMode) {
         PromptMode.Default -> state.promptText.isNotBlank()
         PromptMode.Optimized -> state.optimizedPrompt.isNotBlank() || state.promptText.isNotBlank()
@@ -1330,20 +1436,20 @@ private fun HistoryScreen(
         LazyVerticalGrid(
             columns = GridCells.Fixed(columns),
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 112.dp),
+            contentPadding = PaddingValues(start = UiTokens.s2, top = UiTokens.s2, end = UiTokens.s2, bottom = 112.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(UiTokens.s2),
         ) {
             item(span = { GridItemSpan(columns) }) {
                 SectionCard(title = "历史相册", subtitle = "按相册方式查看结果；点图查看，长按或勾选可批量处理。") {
                     ScrollChipRow {
-                        OutlinedButton(onClick = onRefresh) {
+                        FilledTonalButton(onClick = onRefresh) {
                             Icon(Icons.Default.Refresh, contentDescription = null)
                             Spacer(Modifier.size(8.dp))
                             Text("刷新")
                         }
-                        OutlinedButton(onClick = onSelectAll) { Text("全选") }
-                        OutlinedButton(onClick = onClearSelection) { Text("清空") }
+                        FilledTonalButton(onClick = onSelectAll) { Text("全选") }
+                        FilledTonalButton(onClick = onClearSelection) { Text("清空") }
                         Button(
                             onClick = onDownloadSelected,
                             enabled = state.historySelection.isNotEmpty(),
@@ -1432,20 +1538,22 @@ private fun PromptToolsScreen(
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(UiTokens.s2),
+        verticalArrangement = Arrangement.spacedBy(UiTokens.s2),
     ) {
         item {
             SectionCard(title = "提示词库", subtitle = "一行一个条目，保存后会同步到服务器。") {
-                OutlinedTextField(
+                TextField(
                     value = promptLibraryDraft,
                     onValueChange = onPromptLibraryDraftChange,
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 8,
                     maxLines = 20,
+                shape = UiTokens.r12,
+                colors = appTextFieldColors(),
                 )
-                Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Spacer(Modifier.height(UiTokens.s2))
+                Row(horizontalArrangement = Arrangement.spacedBy(UiTokens.s2)) {
                     Button(onClick = onSavePromptLibrary) {
                         Icon(Icons.Default.Save, contentDescription = null)
                         Spacer(Modifier.size(8.dp))
@@ -1464,27 +1572,27 @@ private fun PromptToolsScreen(
         }
         item {
             SectionCard(title = "人设管理", subtitle = "导入、编辑、保存和删除提示词优化人格。") {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedButton(onClick = onNewPersona) {
+                Row(horizontalArrangement = Arrangement.spacedBy(UiTokens.s2)) {
+                    FilledTonalButton(onClick = onNewPersona) {
                         Text("新建人格")
                     }
-                    OutlinedButton(onClick = onPersonaImport) {
+                    FilledTonalButton(onClick = onPersonaImport) {
                         Icon(Icons.Default.Upload, contentDescription = null)
                         Spacer(Modifier.size(8.dp))
                         Text("导入 .md")
                     }
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(UiTokens.s2))
                 if (state.personas.isNotEmpty()) {
                     Text("可用人设", fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(8.dp))
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(UiTokens.s2)) {
                         items(state.personas, key = { it.id }) { persona ->
-                            OutlinedCard(
+                            Card(
                                 modifier = Modifier.widthIn(min = 180.dp).clickable {
                                     onPersonaSelect(persona.id)
                                 },
-                                colors = CardDefaults.outlinedCardColors(
+                                colors = CardDefaults.cardColors(
                                     containerColor = if (persona.id == state.selectedPersonaId) {
                                         MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
                                     } else {
@@ -1492,7 +1600,7 @@ private fun PromptToolsScreen(
                                     },
                                 ),
                             ) {
-                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Column(modifier = Modifier.padding(UiTokens.s2), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Text(persona.name, fontWeight = FontWeight.SemiBold)
                                     Text(persona.summary, style = MaterialTheme.typography.bodySmall)
                                     Text(persona.filename, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1539,20 +1647,26 @@ private fun SettingsScreen(
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(UiTokens.s2),
+        verticalArrangement = Arrangement.spacedBy(UiTokens.s2),
     ) {
         item {
             SectionCard(title = "服务器", subtitle = "可随时切换到新的后端地址。") {
-                OutlinedTextField(
+                TextField(
                     value = state.serverUrl,
                     onValueChange = onServerUrlChange,
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("服务器地址") },
                     singleLine = true,
+                shape = UiTokens.r12,
+                colors = appTextFieldColors(),
                 )
-                Spacer(Modifier.height(12.dp))
-                Button(onClick = onApplyServerUrl) {
+                Spacer(Modifier.height(UiTokens.s2))
+                Button(
+                    onClick = onApplyServerUrl,
+                    shape = UiTokens.r16,
+                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp),
+                ) {
                     Icon(Icons.Default.Refresh, contentDescription = null)
                     Spacer(Modifier.size(8.dp))
                     Text("保存并重连")
@@ -1567,20 +1681,26 @@ private fun SettingsScreen(
                             Text("当前已登录", fontWeight = FontWeight.SemiBold)
                             Text("你可以继续使用全部功能。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Button(onClick = onLogout) {
+                        FilledTonalButton(onClick = onLogout, shape = UiTokens.r12) {
                             Text("退出登录")
                         }
                     }
                 } else {
-                    OutlinedTextField(
+                    TextField(
                         value = state.loginPassword,
                         onValueChange = onLoginPasswordChange,
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("访问密码") },
                         singleLine = true,
+                    shape = UiTokens.r12,
+                    colors = appTextFieldColors(),
                     )
-                    Spacer(Modifier.height(12.dp))
-                    Button(onClick = onLogin) {
+                    Spacer(Modifier.height(UiTokens.s2))
+                    Button(
+                        onClick = onLogin,
+                        shape = UiTokens.r16,
+                        elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp),
+                    ) {
                         Text("登录")
                     }
                 }
@@ -1588,12 +1708,14 @@ private fun SettingsScreen(
         }
         item {
             SectionCard(title = "提示词库", subtitle = "原来的提示词页已并入设置；一行一个条目。") {
-                OutlinedTextField(
+                TextField(
                     value = promptLibraryDraft,
                     onValueChange = onPromptLibraryDraftChange,
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 8,
                     maxLines = 20,
+                shape = UiTokens.r12,
+                colors = appTextFieldColors(),
                 )
                 Button(onClick = onSavePromptLibrary) {
                     Icon(Icons.Default.Save, contentDescription = null)
@@ -1611,11 +1733,11 @@ private fun SettingsScreen(
         }
         item {
             SectionCard(title = "提示词优化人设", subtitle = "导入、编辑、保存和删除提示词优化人格。") {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedButton(onClick = onNewPersona) {
+                Row(horizontalArrangement = Arrangement.spacedBy(UiTokens.s2)) {
+                    FilledTonalButton(onClick = onNewPersona) {
                         Text("新建人格")
                     }
-                    OutlinedButton(onClick = onPersonaImport) {
+                    FilledTonalButton(onClick = onPersonaImport) {
                         Icon(Icons.Default.Upload, contentDescription = null)
                         Spacer(Modifier.size(8.dp))
                         Text("导入 .md")
@@ -1623,13 +1745,13 @@ private fun SettingsScreen(
                 }
                 if (state.personas.isNotEmpty()) {
                     Text("可用人设", fontWeight = FontWeight.SemiBold)
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(UiTokens.s2)) {
                         items(state.personas, key = { it.id }) { persona ->
-                            OutlinedCard(
+                            Card(
                                 modifier = Modifier
                                     .widthIn(min = 180.dp)
                                     .clickable { onPersonaSelect(persona.id) },
-                                colors = CardDefaults.outlinedCardColors(
+                                colors = CardDefaults.cardColors(
                                     containerColor = if (persona.id == state.selectedPersonaId) {
                                         MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
                                     } else {
@@ -1637,7 +1759,7 @@ private fun SettingsScreen(
                                     },
                                 ),
                             ) {
-                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Column(modifier = Modifier.padding(UiTokens.s2), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Text(persona.name, fontWeight = FontWeight.SemiBold)
                                     Text(persona.summary, style = MaterialTheme.typography.bodySmall)
                                     Text(persona.filename, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1678,10 +1800,10 @@ private fun SectionCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)),
-        shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        shape = UiTokens.r20,
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
     ) {
-        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(modifier = Modifier.padding(UiTokens.s2), verticalArrangement = Arrangement.spacedBy(UiTokens.s1)) {
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(title, style = titleStyle, fontWeight = FontWeight.SemiBold)
                 Text(subtitle, style = subtitleStyle, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1700,12 +1822,12 @@ private fun ImageSlot(
     emptySubtitle: String,
 ) {
     if (image == null) {
-        OutlinedCard(
+        Card(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(180.dp)
                 .clickable(onClick = onAdd),
-            shape = RoundedCornerShape(16.dp),
+            shape = UiTokens.r16,
         ) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1716,7 +1838,7 @@ private fun ImageSlot(
             }
         }
     } else {
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(UiTokens.s2)) {
             ImagePreviewCard(
                 bitmap = image.preview,
                 title = image.name,
@@ -1727,11 +1849,11 @@ private fun ImageSlot(
                 },
                 onClick = onAdd,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(onClick = onAdd) {
+            Row(horizontalArrangement = Arrangement.spacedBy(UiTokens.s2)) {
+                FilledTonalButton(onClick = onAdd) {
                     Text("更换")
                 }
-                OutlinedButton(onClick = onRemove) {
+                FilledTonalButton(onClick = onRemove) {
                     Text("移除")
                 }
             }
@@ -1746,12 +1868,12 @@ private fun ImagePreviewCard(
     subtitle: String,
     onClick: () -> Unit,
 ) {
-    OutlinedCard(
+    Card(
         modifier = Modifier
             .fillMaxWidth()
             .height(240.dp)
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
+        shape = UiTokens.r12,
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             androidx.compose.foundation.Image(
@@ -1783,11 +1905,11 @@ private fun ReferenceThumbCard(
     index: Int,
     onRemove: () -> Unit,
 ) {
-    OutlinedCard(
+    Card(
         modifier = Modifier
             .size(92.dp),
-        shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)),
+        shape = UiTokens.r12,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f)),
     ) {
         Box {
             androidx.compose.foundation.Image(
@@ -1800,7 +1922,7 @@ private fun ReferenceThumbCard(
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(8.dp)
-                    .clip(RoundedCornerShape(10.dp))
+                    .clip(UiTokens.r12)
                     .background(Color.Black.copy(alpha = 0.45f))
                     .padding(horizontal = 8.dp, vertical = 4.dp),
             ) {
@@ -1861,7 +1983,7 @@ private fun PersonaOptimizerPanel(
             )
         }
         if (state.optimizedPrompt.isNotBlank()) {
-            OutlinedTextField(
+            TextField(
                 value = state.optimizedPrompt,
                 onValueChange = {},
                 modifier = Modifier.fillMaxWidth(),
@@ -1869,6 +1991,8 @@ private fun PersonaOptimizerPanel(
                 minLines = 3,
                 maxLines = 6,
                 readOnly = true,
+            shape = UiTokens.r12,
+            colors = appTextFieldColors(),
             )
             CompactActionRow {
                 CompactTextButton(text = "插入", onClick = { onInsertPrompt(state.optimizedPrompt) })
@@ -1912,7 +2036,7 @@ private fun HistoryAlbumCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = UiTokens.r16,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1944,7 +2068,7 @@ private fun HistoryAlbumCard(
                             maxLines = 1,
                         )
                         Text(
-                            text = "${entry.aspectRatio} · ${entry.imageSize}",
+                            text = historyMetaText(entry),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.labelSmall,
                             maxLines = 1,
@@ -1989,19 +2113,19 @@ private fun HistoryActionSheet(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        OutlinedButton(onClick = onView, modifier = Modifier.fillMaxWidth()) {
+        FilledTonalButton(onClick = onView, modifier = Modifier.fillMaxWidth()) {
             Text("查看大图")
         }
-        OutlinedButton(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
+        FilledTonalButton(onClick = onDownload, modifier = Modifier.fillMaxWidth()) {
             Text("下载")
         }
-        OutlinedButton(onClick = onCopy, modifier = Modifier.fillMaxWidth()) {
+        FilledTonalButton(onClick = onCopy, modifier = Modifier.fillMaxWidth()) {
             Text("复制提示词")
         }
-        OutlinedButton(onClick = onSendToBase, modifier = Modifier.fillMaxWidth()) {
+        FilledTonalButton(onClick = onSendToBase, modifier = Modifier.fillMaxWidth()) {
             Text("送到基础图")
         }
-        OutlinedButton(onClick = onSendToReference, modifier = Modifier.fillMaxWidth()) {
+        FilledTonalButton(onClick = onSendToReference, modifier = Modifier.fillMaxWidth()) {
             Text("送到参考图")
         }
         Button(
@@ -2032,7 +2156,7 @@ private fun RemoteGridThumb(
             .data(url)
             .build()
     }
-    OutlinedCard(
+    Card(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(1f)
@@ -2092,6 +2216,11 @@ private fun ResultCard(
                 onLongClick = onDownload,
                 height = 320.dp,
             )
+            Text(
+                text = historyMetaText(entry),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Text(entry.prompt.ifBlank { "未填写提示词" }, style = MaterialTheme.typography.bodySmall, maxLines = 4)
             CompactActionRow {
                 CompactTextButton(text = "复制", onClick = { onCopy(entry.prompt) }, icon = Icons.Default.ContentCopy)
@@ -2111,6 +2240,15 @@ private fun historyGridColumns(screenWidthDp: Int): Int = when {
     else -> 3
 }
 
+private fun historyMetaText(entry: HistoryEntry): String {
+    return listOfNotNull(
+        entry.aspectRatio.takeIf { it.isNotBlank() },
+        entry.imageSize.takeIf { it.isNotBlank() },
+        entry.apiPlatformName.takeIf { it.isNotBlank() },
+        entry.imageModel.takeIf { it.isNotBlank() },
+    ).joinToString(" · ")
+}
+
 @Composable
 private fun PersonaEditor(
     editor: PersonaEditorState,
@@ -2122,34 +2260,42 @@ private fun PersonaEditor(
     onDelete: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        OutlinedTextField(
+        TextField(
             value = editor.filename,
             onValueChange = onFilenameChange,
             modifier = Modifier.fillMaxWidth(),
             label = { Text("文件名") },
             singleLine = true,
+        shape = UiTokens.r12,
+        colors = appTextFieldColors(),
         )
-        OutlinedTextField(
+        TextField(
             value = editor.name,
             onValueChange = onNameChange,
             modifier = Modifier.fillMaxWidth(),
             label = { Text("人格名称") },
             singleLine = true,
+        shape = UiTokens.r12,
+        colors = appTextFieldColors(),
         )
-        OutlinedTextField(
+        TextField(
             value = editor.summary,
             onValueChange = onSummaryChange,
             modifier = Modifier.fillMaxWidth(),
             label = { Text("一句简介") },
             singleLine = true,
+        shape = UiTokens.r12,
+        colors = appTextFieldColors(),
         )
-        OutlinedTextField(
+        TextField(
             value = editor.content,
             onValueChange = onContentChange,
             modifier = Modifier.fillMaxWidth(),
             label = { Text("人格正文 / system prompt") },
             minLines = 6,
             maxLines = 16,
+        shape = UiTokens.r12,
+        colors = appTextFieldColors(),
         )
         CompactActionRow {
             CompactTextButton(text = "保存", onClick = onSave)
@@ -2174,7 +2320,7 @@ private fun RemoteThumb(
             .data(url)
             .build()
     }
-    OutlinedCard(
+    Card(
         modifier = Modifier
             .fillMaxWidth()
             .height(height)
@@ -2182,7 +2328,7 @@ private fun RemoteThumb(
                 onClick = onClick,
                 onLongClick = onLongClick,
             ),
-        shape = RoundedCornerShape(12.dp),
+        shape = UiTokens.r12,
     ) {
         SubcomposeAsyncImage(
             model = request,
@@ -2279,17 +2425,13 @@ private fun RowScope.BottomNavItem(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     onClick: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .weight(1f)
-            .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Icon(icon, contentDescription = label, tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(label, color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-    }
+    NavigationBarItem(
+        selected = selected,
+        onClick = onClick,
+        icon = { Icon(icon, contentDescription = label) },
+        label = { Text(label) },
+        alwaysShowLabel = true,
+    )
 }
 
 @Composable
@@ -2331,15 +2473,27 @@ private fun EmptyHint(
     modifier: Modifier = Modifier,
     fillWidth: Boolean = true,
 ) {
-    OutlinedCard(
+    Card(
         modifier = if (fillWidth) modifier.fillMaxWidth() else modifier,
-        shape = RoundedCornerShape(16.dp),
+        shape = UiTokens.r16,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
     ) {
-        Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+        Box(modifier = Modifier.fillMaxWidth().padding(UiTokens.s2), contentAlignment = Alignment.Center) {
             Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
+
+@Composable
+private fun appTextFieldColors() = TextFieldDefaults.colors(
+    focusedIndicatorColor = Color.Transparent,
+    unfocusedIndicatorColor = Color.Transparent,
+    disabledIndicatorColor = Color.Transparent,
+    errorIndicatorColor = Color.Transparent,
+    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f),
+    disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f),
+)
 
 private data class RatioOption(val label: String, val value: String)
 

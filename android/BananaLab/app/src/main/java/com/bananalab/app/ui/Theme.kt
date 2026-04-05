@@ -2,10 +2,17 @@ package com.bananalab.app.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.shape.RoundedCornerShape
 
 private val BananaLight = lightColorScheme(
     primary = Color(0xFFE7B73A),
@@ -55,6 +62,45 @@ private val BananaDark = darkColorScheme(
     onErrorContainer = Color(0xFFF9DEDC),
 )
 
+private val BananaShapes = Shapes(
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(20.dp),
+)
+
+private val BananaTypography = Typography(
+    titleLarge = TextStyle(
+        fontSize = 30.sp,
+        lineHeight = 36.sp,
+        fontWeight = FontWeight.SemiBold,
+    ),
+    titleMedium = TextStyle(
+        fontSize = 20.sp,
+        lineHeight = 26.sp,
+        fontWeight = FontWeight.SemiBold,
+    ),
+    bodyMedium = TextStyle(
+        fontSize = 15.sp,
+        lineHeight = 22.sp,
+        fontWeight = FontWeight.Normal,
+    ),
+    bodySmall = TextStyle(
+        fontSize = 13.sp,
+        lineHeight = 18.sp,
+        fontWeight = FontWeight.Normal,
+    ),
+    labelMedium = TextStyle(
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        fontWeight = FontWeight.Medium,
+    ),
+    labelSmall = TextStyle(
+        fontSize = 11.sp,
+        lineHeight = 14.sp,
+        fontWeight = FontWeight.Medium,
+    ),
+)
+
 @Composable
 fun BananaLabTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
@@ -62,9 +108,8 @@ fun BananaLabTheme(
 ) {
     MaterialTheme(
         colorScheme = if (darkTheme) BananaDark else BananaLight,
-        shapes = MaterialTheme.shapes,
-        typography = MaterialTheme.typography,
+        shapes = BananaShapes,
+        typography = BananaTypography,
         content = content,
     )
 }
-

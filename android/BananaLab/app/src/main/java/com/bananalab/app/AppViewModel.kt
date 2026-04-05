@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.compose.ui.graphics.ImageBitmap
+import java.io.IOException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,6 +16,8 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 private data class GenerationRequest(
+    val apiPlatformId: String,
+    val imageModel: String,
     val prompt: String,
     val sourcePrompt: String,
     val promptMode: PromptMode,
@@ -24,6 +27,18 @@ private data class GenerationRequest(
     val baseImage: SelectedImage,
     val referenceImages: List<SelectedImage>,
 )
+
+private sealed interface GenerationPipelineResult {
+    data class Success(
+        val entry: HistoryEntry,
+        val recoveredFromHistory: Boolean,
+    ) : GenerationPipelineResult
+
+    data class Failure(
+        val message: String,
+        val sessionExpired: Boolean,
+    ) : GenerationPipelineResult
+}
 
 class BananaLabViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = AppPreferences(application)
@@ -39,6 +54,8 @@ class BananaLabViewModel(application: Application) : AndroidViewModel(applicatio
             enableSearch = prefs.enableSearch,
             promptMode = runCatching { PromptMode.valueOf(prefs.promptMode.replaceFirstChar { it.uppercase() }) }.getOrElse { PromptMode.Default },
             selectedPersonaId = prefs.selectedPersonaId,
+            selectedApiPlatformId = prefs.selectedApiPlatformId,
+            selectedImageModel = prefs.selectedImageModel,
             activeTab = runCatching { AppTab.valueOf(prefs.selectedTab) }.getOrElse { AppTab.Generate },
         ),
     )
@@ -69,6 +86,8 @@ class BananaLabViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             authSessionStore.clear()
             prefs.serverUrl = normalized
+            prefs.selectedApiPlatformId = ""
+            prefs.selectedImageModel = ""
             api.updateServerUrl(normalized)
             _state.update {
                 it.copy(
@@ -82,6 +101,10 @@ class BananaLabViewModel(application: Application) : AndroidViewModel(applicatio
                     personas = emptyList(),
                     selectedPersonaId = "",
                     personaEditor = PersonaEditorState(),
+                    apiPlatforms = emptyList(),
+                    apiPlatformsLoaded = false,
+                    selectedApiPlatformId = "",
+                    selectedImageModel = "",
                     promptLibrary = PromptLibraryState(),
                     optimizedPrompt = "",
                     generationRetryAvailable = false,
@@ -153,6 +176,10 @@ class BananaLabViewModel(application: Application) : AndroidViewModel(applicatio
                     personas = emptyList(),
                     selectedPersonaId = "",
                     personaEditor = PersonaEditorState(),
+                    apiPlatforms = emptyList(),
+                    apiPlatformsLoaded = false,
+                    selectedApiPlatformId = "",
+                    selectedImageModel = "",
                     promptLibrary = PromptLibraryState(),
                     currentResult = null,
                     generationRetryAvailable = false,
@@ -191,6 +218,65 @@ class BananaLabViewModel(application: Application) : AndroidViewModel(applicatio
     fun setSelectedPersonaId(value: String) {
         prefs.selectedPersonaId = value
         _state.update { it.copy(selectedPersonaId = value) }
+    }
+
+    fun loadApiPlatforms() {
+        viewModelScope.launch {
+            runCatching { api.fetchApiPlatforms() }
+                .onSuccess { config ->
+                    val preferredPlatformId = _state.value.selectedApiPlatformId.ifBlank { prefs.selectedApiPlatformId }
+                    val preferredModel = _state.value.selectedImageModel.ifBlank { prefs.selectedImageModel }
+                    applyApiPlatformSelection(
+                        platforms = config.items,
+                        preferredPlatformId = preferredPlatformId,
+                        preferredModel = preferredModel,
+                        fallbackPlatformId = config.defaultPlatformId,
+                        fallbackModel = config.defaultImageModel,
+                    )
+                }
+                .onFailure { error ->
+                    _state.update { it.copy(apiPlatformsLoaded = true) }
+                    handleRequestFailure(error, "API 平台配置加载失败。")
+                }
+        }
+    }
+
+    fun setSelectedApiPlatform(platformId: String) {
+        val current = _state.value
+        val platform = resolveSelectedPlatform(
+            platforms = current.apiPlatforms,
+            preferredPlatformId = platformId,
+            fallbackPlatformId = current.selectedApiPlatformId,
+        ) ?: return
+        val selectedModel = resolveSelectedImageModel(
+            platform = platform,
+            preferredModel = current.selectedImageModel,
+        )
+        persistApiPlatformSelection(platform.id, selectedModel)
+        _state.update {
+            it.copy(
+                selectedApiPlatformId = platform.id,
+                selectedImageModel = selectedModel,
+                errorMessage = "",
+            )
+        }
+    }
+
+    fun setSelectedImageModel(model: String) {
+        val current = _state.value
+        val platform = current.apiPlatforms.firstOrNull { it.id == current.selectedApiPlatformId } ?: return
+        val selectedModel = resolveSelectedImageModel(
+            platform = platform,
+            preferredModel = model,
+            fallbackModel = current.selectedImageModel,
+        )
+        persistApiPlatformSelection(platform.id, selectedModel)
+        _state.update {
+            it.copy(
+                selectedImageModel = selectedModel,
+                errorMessage = "",
+            )
+        }
     }
 
     fun insertPrompt(text: String) {
@@ -511,6 +597,20 @@ class BananaLabViewModel(application: Application) : AndroidViewModel(applicatio
             _state.update { it.copy(errorMessage = "请先选择基础结构图。") }
             return null
         }
+        val apiPlatform = current.apiPlatforms.firstOrNull { it.id == current.selectedApiPlatformId }
+        if (apiPlatform == null) {
+            _state.update { it.copy(errorMessage = "请先选择 API 平台。") }
+            return null
+        }
+        val imageModel = current.selectedImageModel.trim()
+        if (imageModel.isBlank()) {
+            _state.update { it.copy(errorMessage = "请先选择生成模型。") }
+            return null
+        }
+        if (imageModel !in apiPlatform.models) {
+            _state.update { it.copy(errorMessage = "当前模型不属于所选 API 平台，请重新选择。") }
+            return null
+        }
         val promptMode = current.promptMode
         val finalPrompt = when (promptMode) {
             PromptMode.Default -> current.promptText.trim()
@@ -525,6 +625,8 @@ class BananaLabViewModel(application: Application) : AndroidViewModel(applicatio
             return null
         }
         return GenerationRequest(
+            apiPlatformId = apiPlatform.id,
+            imageModel = imageModel,
             prompt = finalPrompt,
             sourcePrompt = current.promptText,
             promptMode = promptMode,
@@ -538,6 +640,9 @@ class BananaLabViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun executeGeneration(request: GenerationRequest) {
         viewModelScope.launch {
+            val previousTopHistoryId = _state.value.history.firstOrNull()?.id
+            val appContext = getApplication<Application>()
+            GenerationForegroundService.start(appContext)
             generationProgressJob?.cancel()
             _state.update {
                 it.copy(
@@ -562,57 +667,157 @@ class BananaLabViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             }
 
-            runCatching {
-                api.generate(
-                    prompt = request.prompt,
-                    sourcePrompt = request.sourcePrompt,
-                    promptMode = request.promptMode.name.lowercase(),
-                    aspectRatio = request.aspectRatio,
-                    imageSize = request.imageSize,
-                    enableSearch = request.enableSearch,
-                    baseImage = request.baseImage,
-                    referenceImages = request.referenceImages,
-                )
-            }.onSuccess { entry ->
-                lastGenerationRequest = request
-                _state.update {
-                    it.copy(
-                        generationInProgress = false,
-                        generationMessage = "",
-                        currentResult = entry,
-                        generationRetryAvailable = false,
-                        statusMessage = "生成成功。",
-                        errorMessage = "",
-                    )
-                }
-                GenerationNotificationManager.showSuccess(getApplication(), "图片已生成完成。")
-                loadHistory(selectEntryId = entry.id)
-            }.onFailure { error ->
-                val message = when (error) {
-                    is ApiHttpException -> if (error.code == 401) {
-                        "登录已过期，请重新登录。"
-                    } else {
-                        error.message
+            try {
+                when (val result = runGenerationPipeline(request, previousTopHistoryId)) {
+                    is GenerationPipelineResult.Success -> {
+                        lastGenerationRequest = request
+                        setActiveTab(AppTab.Result)
+                        _state.update {
+                            it.copy(
+                                generationInProgress = false,
+                                generationMessage = "",
+                                currentResult = result.entry,
+                                generationRetryAvailable = false,
+                                statusMessage = if (result.recoveredFromHistory) {
+                                    "生成已完成，结果已从历史恢复。"
+                                } else {
+                                    "生成成功。"
+                                },
+                                errorMessage = "",
+                            )
+                        }
+                        if (result.recoveredFromHistory) {
+                            GenerationNotificationManager.showSuccess(appContext, "图片已生成完成，结果已自动恢复。")
+                        } else {
+                            GenerationNotificationManager.showSuccess(appContext, "图片已生成完成。")
+                            loadHistory(selectEntryId = result.entry.id)
+                        }
                     }
-                    else -> error.message ?: "生成失败。"
+                    is GenerationPipelineResult.Failure -> {
+                        _state.update {
+                            it.copy(
+                                generationInProgress = false,
+                                generationMessage = "",
+                                generationRetryAvailable = true,
+                                statusMessage = "",
+                                errorMessage = result.message,
+                            )
+                        }
+                        if (result.sessionExpired) {
+                            handleSessionExpired(result.message)
+                        }
+                        GenerationNotificationManager.showFailure(appContext, result.message)
+                    }
                 }
-                _state.update {
-                    it.copy(
-                        generationInProgress = false,
-                        generationMessage = "",
-                        generationRetryAvailable = true,
-                        statusMessage = "",
-                        errorMessage = message,
-                    )
-                }
-                if (error is ApiHttpException && error.code == 401) {
-                    handleSessionExpired(message)
-                }
-                GenerationNotificationManager.showFailure(getApplication(), message)
+            } finally {
+                generationProgressJob?.cancel()
+                generationProgressJob = null
+                GenerationForegroundService.stop(appContext)
             }
-            generationProgressJob?.cancel()
-            generationProgressJob = null
         }
+    }
+
+    private suspend fun runGenerationPipeline(
+        request: GenerationRequest,
+        previousTopHistoryId: String?,
+    ): GenerationPipelineResult {
+        val generatedEntry = runCatching {
+            api.generate(
+                apiPlatformId = request.apiPlatformId,
+                imageModel = request.imageModel,
+                prompt = request.prompt,
+                sourcePrompt = request.sourcePrompt,
+                promptMode = request.promptMode.name.lowercase(),
+                aspectRatio = request.aspectRatio,
+                imageSize = request.imageSize,
+                enableSearch = request.enableSearch,
+                baseImage = request.baseImage,
+                referenceImages = request.referenceImages,
+            )
+        }.getOrElse { error ->
+            if (error is ApiHttpException && error.code == 401) {
+                return GenerationPipelineResult.Failure(
+                    message = "登录已过期，请重新登录。",
+                    sessionExpired = true,
+                )
+            }
+
+            val connectionAbort = error.isRecoverableConnectionAbort()
+            val recoveredEntry = recoverGeneratedEntry(
+                request = request,
+                previousTopHistoryId = previousTopHistoryId,
+                aggressive = connectionAbort,
+            )
+            if (recoveredEntry != null) {
+                return GenerationPipelineResult.Success(
+                    entry = recoveredEntry,
+                    recoveredFromHistory = true,
+                )
+            }
+
+            return GenerationPipelineResult.Failure(
+                message = if (connectionAbort) {
+                    "网络中断，暂未确认结果。可稍后在历史中查看，或点击重试。"
+                } else {
+                    error.message ?: "生成失败。"
+                },
+                sessionExpired = false,
+            )
+        }
+
+        return GenerationPipelineResult.Success(
+            entry = generatedEntry,
+            recoveredFromHistory = false,
+        )
+    }
+
+    private suspend fun recoverGeneratedEntry(
+        request: GenerationRequest,
+        previousTopHistoryId: String?,
+        aggressive: Boolean,
+    ): HistoryEntry? {
+        val totalAttempts = if (aggressive) 12 else 4
+        val intervalMs = if (aggressive) 1500L else 1200L
+        repeat(totalAttempts) { attempt ->
+            val items = runCatching { api.fetchHistory() }.getOrNull()
+            if (items != null) {
+                val recovered = findRecoveredEntry(items, request, previousTopHistoryId)
+                if (recovered != null) {
+                    _state.update {
+                        val selection = it.historySelection.filterTo(mutableSetOf()) { selected ->
+                            items.any { item -> item.id == selected }
+                        }
+                        it.copy(
+                            history = items,
+                            historySelection = selection,
+                            currentResult = recovered,
+                        )
+                    }
+                    return recovered
+                }
+            }
+            if (attempt < totalAttempts - 1) {
+                delay(intervalMs)
+            }
+        }
+        return null
+    }
+
+    private fun findRecoveredEntry(
+        items: List<HistoryEntry>,
+        request: GenerationRequest,
+        previousTopHistoryId: String?,
+    ): HistoryEntry? {
+        val strict = items.firstOrNull { entry -> entry.matchesGenerationRequestStrict(request) }
+        if (strict != null) return strict
+        val relaxed = items.firstOrNull { entry -> entry.matchesGenerationRequestRelaxed(request) }
+        if (relaxed != null) return relaxed
+
+        val newest = items.firstOrNull() ?: return null
+        if (previousTopHistoryId != null && newest.id != previousTopHistoryId && newest.matchesGenerationSettings(request)) {
+            return newest
+        }
+        return null
     }
 
     fun loadHistory(selectEntryId: String? = null) {
@@ -726,6 +931,10 @@ class BananaLabViewModel(application: Application) : AndroidViewModel(applicatio
                 personas = emptyList(),
                 selectedPersonaId = "",
                 personaEditor = PersonaEditorState(),
+                apiPlatforms = emptyList(),
+                apiPlatformsLoaded = false,
+                selectedApiPlatformId = "",
+                selectedImageModel = "",
                 promptLibrary = PromptLibraryState(),
                 optimizedPrompt = "",
                 optimizingPrompt = false,
@@ -974,6 +1183,7 @@ class BananaLabViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun loadProtectedData() {
+        loadApiPlatforms()
         loadPromptLibrary()
         loadPersonas()
         loadHistory()
@@ -1013,5 +1223,122 @@ class BananaLabViewModel(application: Application) : AndroidViewModel(applicatio
             content = content.trim(),
             filename = filename.trim().ifBlank { "persona.md" },
         )
+    }
+
+    private fun HistoryEntry.matchesGenerationRequest(request: GenerationRequest): Boolean {
+        val normalizedRequestPrompt = request.prompt.trim()
+        val normalizedRequestSourcePrompt = request.sourcePrompt.trim()
+        val normalizedEntryPrompt = prompt.trim()
+        val normalizedEntrySourcePrompt = sourcePrompt.trim()
+        val promptMatches = normalizedEntryPrompt == normalizedRequestPrompt
+        val sourceMatches = normalizedRequestSourcePrompt.isNotBlank() && normalizedEntrySourcePrompt == normalizedRequestSourcePrompt
+        val promptModeMatches = promptMode.equals(request.promptMode.name.lowercase(), ignoreCase = true)
+        val aspectRatioMatches = request.aspectRatio.equals("auto", ignoreCase = true) || aspectRatio == request.aspectRatio
+        val imageSizeMatches = imageSize == request.imageSize
+        val searchMatches = enableSearch == request.enableSearch
+        val referenceCountMatches = referenceCount == request.referenceImages.size
+        val platformMatches = apiPlatformId.isBlank() || apiPlatformId == request.apiPlatformId
+        val imageModelMatches = imageModel.isBlank() || imageModel == request.imageModel
+        return (promptMatches || sourceMatches) &&
+            promptModeMatches &&
+            aspectRatioMatches &&
+            imageSizeMatches &&
+            searchMatches &&
+            referenceCountMatches &&
+            platformMatches &&
+            imageModelMatches
+    }
+
+    private fun HistoryEntry.matchesGenerationRequestStrict(request: GenerationRequest): Boolean {
+        if (!matchesGenerationRequest(request)) return false
+        return baseImageName.normalizedFileName() == request.baseImage.name.normalizedFileName()
+    }
+
+    private fun HistoryEntry.matchesGenerationRequestRelaxed(request: GenerationRequest): Boolean {
+        return matchesGenerationRequest(request)
+    }
+
+    private fun HistoryEntry.matchesGenerationSettings(request: GenerationRequest): Boolean {
+        val promptModeMatches = promptMode.equals(request.promptMode.name.lowercase(), ignoreCase = true)
+        val aspectRatioMatches = request.aspectRatio.equals("auto", ignoreCase = true) || aspectRatio == request.aspectRatio
+        val imageSizeMatches = imageSize == request.imageSize
+        val searchMatches = enableSearch == request.enableSearch
+        val referenceCountMatches = referenceCount == request.referenceImages.size
+        val platformMatches = apiPlatformId.isBlank() || apiPlatformId == request.apiPlatformId
+        val imageModelMatches = imageModel.isBlank() || imageModel == request.imageModel
+        return promptModeMatches &&
+            aspectRatioMatches &&
+            imageSizeMatches &&
+            searchMatches &&
+            referenceCountMatches &&
+            platformMatches &&
+            imageModelMatches
+    }
+
+    private fun applyApiPlatformSelection(
+        platforms: List<ApiPlatformOption>,
+        preferredPlatformId: String,
+        preferredModel: String,
+        fallbackPlatformId: String = "",
+        fallbackModel: String = "",
+    ) {
+        val platform = resolveSelectedPlatform(platforms, preferredPlatformId, fallbackPlatformId)
+        val selectedPlatformId = platform?.id.orEmpty()
+        val selectedModel = resolveSelectedImageModel(platform, preferredModel, fallbackModel)
+        persistApiPlatformSelection(selectedPlatformId, selectedModel)
+        _state.update {
+            it.copy(
+                apiPlatforms = platforms,
+                apiPlatformsLoaded = true,
+                selectedApiPlatformId = selectedPlatformId,
+                selectedImageModel = selectedModel,
+                errorMessage = "",
+            )
+        }
+    }
+
+    private fun resolveSelectedPlatform(
+        platforms: List<ApiPlatformOption>,
+        preferredPlatformId: String,
+        fallbackPlatformId: String = "",
+    ): ApiPlatformOption? {
+        return platforms.firstOrNull { it.id == preferredPlatformId } ?:
+            platforms.firstOrNull { it.id == fallbackPlatformId } ?:
+            platforms.firstOrNull()
+    }
+
+    private fun resolveSelectedImageModel(
+        platform: ApiPlatformOption?,
+        preferredModel: String,
+        fallbackModel: String = "",
+    ): String {
+        if (platform == null) return ""
+        return when {
+            preferredModel.isNotBlank() && preferredModel in platform.models -> preferredModel
+            fallbackModel.isNotBlank() && fallbackModel in platform.models -> fallbackModel
+            platform.defaultModel.isNotBlank() && platform.defaultModel in platform.models -> platform.defaultModel
+            else -> platform.models.firstOrNull().orEmpty()
+        }
+    }
+
+    private fun persistApiPlatformSelection(platformId: String, imageModel: String) {
+        prefs.selectedApiPlatformId = platformId
+        prefs.selectedImageModel = imageModel
+    }
+
+    private fun Throwable.isRecoverableConnectionAbort(): Boolean {
+        if (this !is IOException) return false
+        val text = message.orEmpty().lowercase()
+        if (text.contains("software caused connection abort")) return true
+        if (text.contains("connection reset")) return true
+        if (text.contains("broken pipe")) return true
+        if (text.contains("timeout")) return true
+        return false
+    }
+
+    private fun String.normalizedFileName(): String {
+        return trim().lowercase()
+            .substringAfterLast('/')
+            .substringAfterLast('\\')
     }
 }

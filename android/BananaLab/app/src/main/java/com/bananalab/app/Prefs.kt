@@ -33,6 +33,14 @@ class AppPreferences(context: Context) {
         get() = prefs.getString(KEY_SELECTED_PERSONA_ID, "") ?: ""
         set(value) = prefs.edit().putString(KEY_SELECTED_PERSONA_ID, value).apply()
 
+    var selectedApiPlatformId: String
+        get() = prefs.getString(KEY_SELECTED_API_PLATFORM_ID, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_SELECTED_API_PLATFORM_ID, value).apply()
+
+    var selectedImageModel: String
+        get() = prefs.getString(KEY_SELECTED_IMAGE_MODEL, "") ?: ""
+        set(value) = prefs.edit().putString(KEY_SELECTED_IMAGE_MODEL, value).apply()
+
     var selectedTab: String
         get() = prefs.getString(KEY_SELECTED_TAB, AppTab.Generate.name) ?: AppTab.Generate.name
         set(value) = prefs.edit().putString(KEY_SELECTED_TAB, value).apply()
@@ -46,7 +54,8 @@ class AppPreferences(context: Context) {
         private const val KEY_ENABLE_SEARCH = "enable_search"
         private const val KEY_PROMPT_MODE = "prompt_mode"
         private const val KEY_SELECTED_PERSONA_ID = "selected_persona_id"
+        private const val KEY_SELECTED_API_PLATFORM_ID = "selected_api_platform_id"
+        private const val KEY_SELECTED_IMAGE_MODEL = "selected_image_model"
         private const val KEY_SELECTED_TAB = "selected_tab"
     }
 }
-

@@ -6,13 +6,13 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import androidx.core.app.NotificationCompat
+import kotlin.random.Random
 
 object GenerationNotificationManager {
-    private const val CHANNEL_ID = "banana_lab_generation"
+    private const val CHANNEL_ID = "banana_lab_generation_v2"
     private const val CHANNEL_NAME = "生成状态"
     private const val CHANNEL_DESCRIPTION = "显示生成成功和失败通知"
-    private const val SUCCESS_ID = 61001
-    private const val FAILURE_ID = 61002
 
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -22,9 +22,11 @@ object GenerationNotificationManager {
         val channel = NotificationChannel(
             CHANNEL_ID,
             CHANNEL_NAME,
-            NotificationManager.IMPORTANCE_DEFAULT,
+            NotificationManager.IMPORTANCE_HIGH,
         ).apply {
             description = CHANNEL_DESCRIPTION
+            enableVibration(true)
+            setShowBadge(true)
         }
         manager.createNotificationChannel(channel)
     }
@@ -32,7 +34,6 @@ object GenerationNotificationManager {
     fun showSuccess(context: Context, message: String) {
         postNotification(
             context = context,
-            id = SUCCESS_ID,
             title = "生成成功",
             message = message.ifBlank { "图片已生成完成。" },
         )
@@ -41,16 +42,16 @@ object GenerationNotificationManager {
     fun showFailure(context: Context, message: String) {
         postNotification(
             context = context,
-            id = FAILURE_ID,
             title = "生成失败",
             message = message.ifBlank { "生成过程中发生了错误。" },
         )
     }
 
-    private fun postNotification(context: Context, id: Int, title: String, message: String) {
+    private fun postNotification(context: Context, title: String, message: String) {
         ensureChannel(context)
         val manager = context.getSystemService(NotificationManager::class.java)
-        manager.notify(id, buildNotification(context, title, message))
+        // Use a unique ID so each generation result can alert independently.
+        manager.notify(Random.nextInt(100_000, 999_999), buildNotification(context, title, message))
     }
 
     private fun buildNotification(context: Context, title: String, message: String): android.app.Notification {
@@ -63,14 +64,17 @@ object GenerationNotificationManager {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or pendingIntentFlags(),
         )
-        return android.app.Notification.Builder(context, CHANNEL_ID)
+        return NotificationCompat.Builder(context, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(message)
-            .setStyle(android.app.Notification.BigTextStyle().bigText(message))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
             .setSmallIcon(android.R.drawable.sym_def_app_icon)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
-            .setCategory(android.app.Notification.CATEGORY_STATUS)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(android.app.Notification.DEFAULT_ALL)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .build()
     }
 

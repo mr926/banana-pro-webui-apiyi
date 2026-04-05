@@ -20,6 +20,9 @@ data class HistoryEntry(
     val thumbUrl: String,
     val downloadName: String,
     val message: String?,
+    val apiPlatformId: String = "",
+    val apiPlatformName: String = "",
+    val imageModel: String = "",
     val ossImageUrl: String? = null,
     val ossThumbUrl: String? = null,
     val ossImageKey: String? = null,
@@ -75,6 +78,19 @@ data class DownloadTarget(
     val source: String,
 )
 
+data class ApiPlatformOption(
+    val id: String,
+    val name: String,
+    val models: List<String>,
+    val defaultModel: String,
+)
+
+data class ApiPlatformConfig(
+    val items: List<ApiPlatformOption> = emptyList(),
+    val defaultPlatformId: String = "",
+    val defaultImageModel: String = "",
+)
+
 data class GenerateResult(
     val entry: HistoryEntry,
     val downloadTarget: DownloadTarget? = null,
@@ -108,6 +124,10 @@ data class AppUiState(
     val personas: List<PersonaSummary> = emptyList(),
     val selectedPersonaId: String = "",
     val personaEditor: PersonaEditorState = PersonaEditorState(),
+    val apiPlatforms: List<ApiPlatformOption> = emptyList(),
+    val apiPlatformsLoaded: Boolean = false,
+    val selectedApiPlatformId: String = "",
+    val selectedImageModel: String = "",
     val baseImage: SelectedImage? = null,
     val referenceImages: List<SelectedImage> = emptyList(),
     val aspectRatio: String = "auto",

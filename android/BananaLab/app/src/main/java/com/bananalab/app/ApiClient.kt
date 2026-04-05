@@ -95,6 +95,15 @@ class BananaLabApi(
         clearSession()
     }
 
+    suspend fun fetchApiPlatforms(): ApiPlatformConfig = withContext(Dispatchers.IO) {
+        val json = getJson("api/image-platforms")
+        ApiPlatformConfig(
+            items = json.optJSONArray("items")?.toApiPlatformList().orEmpty(),
+            defaultPlatformId = json.optString("defaultPlatformId").orEmpty(),
+            defaultImageModel = json.optString("defaultImageModel").orEmpty(),
+        )
+    }
+
     suspend fun fetchHistory(): List<HistoryEntry> = withContext(Dispatchers.IO) {
         val json = getJson("api/history")
         json.optJSONArray("items")?.toHistoryList().orEmpty()
@@ -213,6 +222,8 @@ class BananaLabApi(
     }
 
     suspend fun generate(
+        apiPlatformId: String,
+        imageModel: String,
         prompt: String,
         sourcePrompt: String,
         promptMode: String,
@@ -223,6 +234,8 @@ class BananaLabApi(
         referenceImages: List<SelectedImage>,
     ): HistoryEntry = withContext(Dispatchers.IO) {
         val multipart = MultipartBody.Builder().setType(MultipartBody.FORM)
+        multipart.addFormDataPart("apiPlatformId", apiPlatformId)
+        multipart.addFormDataPart("imageModel", imageModel)
         multipart.addFormDataPart("prompt", prompt)
         multipart.addFormDataPart("sourcePrompt", sourcePrompt)
         multipart.addFormDataPart("promptMode", promptMode)
@@ -353,6 +366,23 @@ class BananaLabApi(
         }
     }
 
+    private fun JSONArray.toApiPlatformList(): List<ApiPlatformOption> = buildList {
+        for (i in 0 until length()) {
+            val item = optJSONObject(i) ?: continue
+            val models = item.optJSONArray("models")?.toStringList().orEmpty()
+            val id = item.optString("id").orEmpty().trim()
+            if (id.isBlank() || models.isEmpty()) continue
+            add(
+                ApiPlatformOption(
+                    id = id,
+                    name = item.optString("name").orEmpty().ifBlank { "未命名平台" },
+                    models = models,
+                    defaultModel = item.optString("defaultModel").orEmpty(),
+                ),
+            )
+        }
+    }
+
     private fun JSONArray.toPersonaSummaryList(): List<PersonaSummary> = buildList {
         for (i in 0 until length()) {
             val item = optJSONObject(i) ?: continue
@@ -383,6 +413,9 @@ class BananaLabApi(
             thumbUrl = optString("thumbUrl").orEmpty(),
             downloadName = optString("downloadName").orEmpty(),
             message = optString("message").takeIf { it.isNotBlank() },
+            apiPlatformId = optString("apiPlatformId").orEmpty(),
+            apiPlatformName = optString("apiPlatformName").orEmpty(),
+            imageModel = optString("imageModel").orEmpty(),
             ossImageUrl = optString("ossImageUrl").takeIf { it.isNotBlank() },
             ossThumbUrl = optString("ossThumbUrl").takeIf { it.isNotBlank() },
             ossImageKey = optString("ossImageKey").takeIf { it.isNotBlank() },

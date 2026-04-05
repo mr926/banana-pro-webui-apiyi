@@ -8,6 +8,12 @@ const albumSelectAllButton = document.getElementById("album-select-all");
 const albumClearSelectionButton = document.getElementById("album-clear-selection");
 const albumDownloadSelectedButton = document.getElementById("album-download-selected");
 const albumSelectionStatus = document.getElementById("album-selection-status");
+const albumPagination = document.getElementById("album-pagination");
+const albumPaginationSummary = document.getElementById("album-pagination-summary");
+const albumPageInfo = document.getElementById("album-page-info");
+const albumPrevPageButton = document.getElementById("album-prev-page");
+const albumNextPageButton = document.getElementById("album-next-page");
+const ALBUM_PAGE_SIZE = 24;
 const IMAGE_TRANSFER_QUEUE_KEY = "banana-pro-image-transfer-queue";
 
 const albumState = {
@@ -15,6 +21,10 @@ const albumState = {
   selectedIds: new Set(),
   authenticated: false,
   passwordEnabled: false,
+  page: 1,
+  pageSize: ALBUM_PAGE_SIZE,
+  total: 0,
+  totalPages: 0,
 };
 
 function getPreferredImageUrl(entry) {
@@ -236,32 +246,33 @@ async function downloadEntryImage(entry) {
 }
 
 function getHistorySummaryText() {
-  const total = albumState.items.length;
-  const selected = albumState.selectedIds.size;
+  const pageTotal = albumState.items.length;
+  const selectedOnPage = getSelectedCountOnPage();
+  const selectedTotal = albumState.selectedIds.size;
+  const total = Math.max(0, Number(albumState.total || 0));
   if (total === 0) {
-    return "暂无可选图片。";
+    return "还没有历史图片。";
   }
-  return `已选择 ${selected} / ${total} 张`;
+  if (selectedTotal > 0) {
+    return `本页已选 ${selectedOnPage} / ${pageTotal} 张，累计已选 ${selectedTotal} 张，共 ${total} 张历史。`;
+  }
+  return `本页 ${pageTotal} 张，共 ${total} 张历史。`;
 }
 
-function normalizeSelection(items) {
-  const validIds = new Set(
-    items
-      .map((item) => item.id)
-      .filter((id) => typeof id === "string" && id),
-  );
-
-  Array.from(albumState.selectedIds).forEach((id) => {
-    if (!validIds.has(id)) {
-      albumState.selectedIds.delete(id);
+function getSelectedCountOnPage() {
+  return albumState.items.reduce((count, item) => {
+    if (typeof item?.id === "string" && item.id && albumState.selectedIds.has(item.id)) {
+      return count + 1;
     }
-  });
+    return count;
+  }, 0);
 }
 
 function syncAlbumToolbar() {
   const needsPassword = albumState.passwordEnabled && !albumState.authenticated;
   const total = albumState.items.length;
   const selectedCount = albumState.selectedIds.size;
+  const selectedOnPage = getSelectedCountOnPage();
 
   if (albumSelectionStatus) {
     albumSelectionStatus.textContent = needsPassword ? "登录后可进行批量选择与下载。" : getHistorySummaryText();
@@ -269,7 +280,8 @@ function syncAlbumToolbar() {
   }
 
   if (albumSelectAllButton) {
-    albumSelectAllButton.disabled = needsPassword || total === 0 || selectedCount === total;
+    albumSelectAllButton.textContent = total > 0 && selectedOnPage === total ? "本页已全选" : "本页全选";
+    albumSelectAllButton.disabled = needsPassword || total === 0 || selectedOnPage === total;
   }
   if (albumClearSelectionButton) {
     albumClearSelectionButton.disabled = needsPassword || selectedCount === 0;
@@ -277,6 +289,47 @@ function syncAlbumToolbar() {
   if (albumDownloadSelectedButton) {
     albumDownloadSelectedButton.disabled = needsPassword || selectedCount === 0;
   }
+}
+
+function syncAlbumPagination() {
+  const total = Math.max(0, Number(albumState.total || 0));
+  const currentPage = Math.max(1, Number(albumState.page || 1));
+  const totalPages = Math.max(0, Number(albumState.totalPages || 0));
+  const hasItems = total > 0;
+
+  albumPagination?.classList.toggle("hidden", !hasItems);
+
+  if (albumPaginationSummary) {
+    albumPaginationSummary.textContent = hasItems ? `共 ${total} 张历史图片` : "";
+  }
+  if (albumPageInfo) {
+    albumPageInfo.textContent = hasItems ? `第 ${currentPage} / ${Math.max(totalPages, 1)} 页` : "";
+  }
+  if (albumPrevPageButton) {
+    albumPrevPageButton.disabled = !hasItems || currentPage <= 1;
+  }
+  if (albumNextPageButton) {
+    albumNextPageButton.disabled = !hasItems || currentPage >= totalPages;
+  }
+}
+
+function resetAlbumPagination(clearSelection = false) {
+  albumState.items = [];
+  albumState.page = 1;
+  albumState.total = 0;
+  albumState.totalPages = 0;
+  if (clearSelection) {
+    albumState.selectedIds.clear();
+  }
+  syncAlbumToolbar();
+  syncAlbumPagination();
+}
+
+function buildAlbumHistoryRequestUrl(page = albumState.page) {
+  const params = new URLSearchParams();
+  params.set("page", String(Math.max(1, Number(page) || 1)));
+  params.set("pageSize", String(albumState.pageSize || ALBUM_PAGE_SIZE));
+  return `/api/history?${params.toString()}`;
 }
 
 async function downloadSelectedInBatch() {
@@ -297,6 +350,7 @@ async function downloadSelectedInBatch() {
     if (response.status === 401) {
       setAlbumAuthUI(false, true);
       albumGrid.innerHTML = `<div class="empty-history">登录后可查看历史相册。</div>`;
+      resetAlbumPagination(true);
       return;
     }
     const payload = await readJsonSafely(response);
@@ -345,7 +399,6 @@ async function downloadSelectedInBatch() {
 
 function renderAlbum(items) {
   albumState.items = Array.isArray(items) ? items : [];
-  normalizeSelection(albumState.items);
   albumGrid.innerHTML = "";
   if (albumState.items.length === 0) {
     albumGrid.innerHTML = `<div class="empty-history">还没有历史图片。</div>`;
@@ -393,6 +446,7 @@ function renderAlbum(items) {
         if (error instanceof Error && error.message === "__AUTH_REQUIRED__") {
           setAlbumAuthUI(false, true);
           albumGrid.innerHTML = `<div class="empty-history">登录后可查看历史相册。</div>`;
+          resetAlbumPagination(true);
           return;
         }
         alert(error instanceof Error ? error.message : "下载失败，请重试。");
@@ -421,18 +475,29 @@ function renderAlbum(items) {
   syncAlbumToolbar();
 }
 
-async function loadAlbum() {
-  const response = await fetch("/api/history");
+async function loadAlbum(page = albumState.page) {
+  const targetPage = Math.max(1, Number(page) || 1);
+  const response = await fetch(buildAlbumHistoryRequestUrl(targetPage));
   if (response.status === 401) {
     setAlbumAuthUI(false, true);
     albumGrid.innerHTML = `<div class="empty-history">登录后可查看历史相册。</div>`;
-    albumState.items = [];
-    albumState.selectedIds.clear();
-    syncAlbumToolbar();
+    resetAlbumPagination(true);
     return;
   }
+
   const payload = await readJsonSafely(response);
+  if (!response.ok) {
+    throw new Error(payload.error || "相册加载失败，请刷新重试。");
+  }
+
+  albumState.page = Math.max(1, Number(payload.page || targetPage || 1));
+  albumState.total = Math.max(0, Number(payload.total || 0));
+  albumState.totalPages = Math.max(
+    0,
+    Number(payload.totalPages || (Array.isArray(payload.items) && payload.items.length > 0 ? 1 : 0)),
+  );
   renderAlbum(payload.items || []);
+  syncAlbumPagination();
 }
 
 albumLoginForm.addEventListener("submit", async (event) => {
@@ -455,7 +520,7 @@ albumLoginForm.addEventListener("submit", async (event) => {
     setAlbumAuthStatus("");
     albumPasswordInput.value = "";
     setAlbumAuthUI(true, payload.passwordEnabled !== false);
-    await loadAlbum();
+    await loadAlbum(1);
   } catch (error) {
     setAlbumAuthStatus(error instanceof Error ? error.message : "登录失败", true);
   }
@@ -467,12 +532,14 @@ async function bootstrapAlbum() {
     const payload = await readJsonSafely(response);
     setAlbumAuthUI(Boolean(payload.authenticated), Boolean(payload.passwordEnabled));
     if (!payload.passwordEnabled || payload.authenticated) {
-      await loadAlbum();
+      await loadAlbum(1);
     } else {
       albumGrid.innerHTML = `<div class="empty-history">登录后可查看历史相册。</div>`;
+      resetAlbumPagination(true);
     }
   } catch (error) {
     albumGrid.innerHTML = `<div class="empty-history">相册加载失败，请刷新重试。</div>`;
+    resetAlbumPagination(true);
   }
 }
 
@@ -494,5 +561,24 @@ albumDownloadSelectedButton?.addEventListener("click", async () => {
   await downloadSelectedInBatch();
 });
 
+albumPrevPageButton?.addEventListener("click", async () => {
+  if (albumState.page <= 1) return;
+  try {
+    await loadAlbum(albumState.page - 1);
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "相册加载失败，请刷新重试。");
+  }
+});
+
+albumNextPageButton?.addEventListener("click", async () => {
+  if (albumState.page >= albumState.totalPages) return;
+  try {
+    await loadAlbum(albumState.page + 1);
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "相册加载失败，请刷新重试。");
+  }
+});
+
 syncAlbumToolbar();
+syncAlbumPagination();
 bootstrapAlbum();
