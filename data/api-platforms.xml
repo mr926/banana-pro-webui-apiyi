@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<apiPlatforms version="1">
+  <platform id="apiyi" name="APIYI" default="true">
+    <url>https://api.apiyi.com/v1beta/models/{model}:generateContent</url>
+    <key></key>
+    <models separator="|">gemini-3-pro-image-preview|gemini-3.1-flash-image-preview-4k</models>
+  </platform>
+  <!--
+  复制一个 <platform> 节点即可新增平台。
+  一个平台对应一个 url 和一个 key，models 里可用 separator 指定的符号分隔多个模型。
+
+  <platform id="another-provider" name="Another Provider">
+    <url>https://grsai.dakka.com.cn/v1beta/models/{model}:generateContent</url>
+    <key></key>
+    <models separator="|">nano-banana-pro|nano-banana-2</models>
+  </platform>
+  -->
+</apiPlatforms>

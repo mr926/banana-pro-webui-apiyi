@@ -16,6 +16,9 @@ const loginForm = document.getElementById("login-form");
 const passwordInput = document.getElementById("password-input");
 const authStatus = document.getElementById("auth-status");
 const logoutButton = document.getElementById("logout-button");
+const apiPlatformSelect = document.getElementById("api-platform-select");
+const imageModelSelect = document.getElementById("image-model-select");
+const apiPlatformHint = document.getElementById("api-platform-hint");
 const promptLibrarySelect = document.getElementById("prompt-library-select");
 const managePromptLibraryButton = document.getElementById("manage-prompt-library-button");
 const promptTextarea = document.getElementById("prompt");
@@ -62,6 +65,9 @@ const state = {
   passwordEnabled: false,
   baseImageFile: null,
   referenceFiles: [],
+  apiPlatforms: [],
+  selectedApiPlatformId: "",
+  selectedImageModel: "",
   promptLibrary: [],
   promptLibraryContent: "",
   promptPersonas: [],
@@ -962,6 +968,137 @@ function appendPromptText(text) {
   resetOptimizedPrompt();
 }
 
+function setApiPlatformHint(message, isError = false) {
+  if (!apiPlatformHint) return;
+  apiPlatformHint.textContent = message || "";
+  apiPlatformHint.classList.toggle("is-error", Boolean(isError));
+}
+
+function getSelectedApiPlatform() {
+  return state.apiPlatforms.find((platform) => platform.id === state.selectedApiPlatformId) || null;
+}
+
+function renderApiPlatformOptions() {
+  if (!apiPlatformSelect) return;
+
+  apiPlatformSelect.innerHTML = "";
+  if (!state.apiPlatforms.length) {
+    apiPlatformSelect.disabled = true;
+    apiPlatformSelect.innerHTML = `<option value="">未找到 API 平台</option>`;
+    return;
+  }
+
+  state.apiPlatforms.forEach((platform) => {
+    const option = document.createElement("option");
+    option.value = platform.id;
+    option.textContent = platform.name;
+    option.selected = platform.id === state.selectedApiPlatformId;
+    apiPlatformSelect.appendChild(option);
+  });
+  apiPlatformSelect.disabled = false;
+}
+
+function syncImageModelOptions(preferredModel = "") {
+  if (!imageModelSelect) return;
+
+  const platform = getSelectedApiPlatform();
+  imageModelSelect.innerHTML = "";
+
+  if (!platform) {
+    state.selectedImageModel = "";
+    imageModelSelect.disabled = true;
+    imageModelSelect.innerHTML = `<option value="">请先选择 API 平台</option>`;
+    setApiPlatformHint("将根据所选平台自动匹配对应的接口地址和密钥。");
+    return;
+  }
+
+  const candidateModel =
+    preferredModel ||
+    state.selectedImageModel ||
+    platform.defaultModel ||
+    platform.models?.[0] ||
+    "";
+  const fallbackModel = platform.models.includes(candidateModel)
+    ? candidateModel
+    : (platform.defaultModel && platform.models.includes(platform.defaultModel) ? platform.defaultModel : platform.models[0]);
+
+  state.selectedImageModel = fallbackModel || "";
+  platform.models.forEach((model) => {
+    const option = document.createElement("option");
+    option.value = model;
+    option.textContent = model;
+    option.selected = model === state.selectedImageModel;
+    imageModelSelect.appendChild(option);
+  });
+  imageModelSelect.disabled = !platform.models.length;
+
+  const hintParts = [platform.name];
+  if (state.selectedImageModel) {
+    hintParts.push(`当前模型 ${state.selectedImageModel}`);
+  }
+  hintParts.push(`${platform.models.length} 个可选模型`);
+  setApiPlatformHint(hintParts.join(" · "));
+}
+
+function applyApiPlatformSelection(platformId, preferredModel = "") {
+  const nextPlatform =
+    state.apiPlatforms.find((platform) => platform.id === platformId) ||
+    state.apiPlatforms[0] ||
+    null;
+
+  state.selectedApiPlatformId = nextPlatform?.id || "";
+  renderApiPlatformOptions();
+  syncImageModelOptions(preferredModel);
+  syncSubmitButtonState();
+}
+
+function resetApiPlatforms(message = "登录后加载 API 平台配置。") {
+  state.apiPlatforms = [];
+  state.selectedApiPlatformId = "";
+  state.selectedImageModel = "";
+
+  if (apiPlatformSelect) {
+    apiPlatformSelect.disabled = true;
+    apiPlatformSelect.innerHTML = `<option value="">暂无平台配置</option>`;
+  }
+  if (imageModelSelect) {
+    imageModelSelect.disabled = true;
+    imageModelSelect.innerHTML = `<option value="">暂无模型可选</option>`;
+  }
+  setApiPlatformHint(message);
+  syncSubmitButtonState();
+}
+
+async function loadApiPlatforms() {
+  const response = await fetch("/api/image-platforms");
+  if (response.status === 401) {
+    setAuthUI(false, true);
+    resetApiPlatforms("登录后加载 API 平台配置。");
+    return;
+  }
+
+  const payload = await readJsonSafely(response);
+  if (!response.ok) {
+    throw new Error(getPayloadErrorMessage(payload, "读取 API 平台配置失败"));
+  }
+
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  state.apiPlatforms = items.map((item) => ({
+    id: String(item.id || "").trim(),
+    name: String(item.name || "未命名平台").trim() || "未命名平台",
+    models: Array.isArray(item.models)
+      ? item.models.map((model) => String(model || "").trim()).filter(Boolean)
+      : [],
+    defaultModel: String(item.defaultModel || "").trim(),
+  })).filter((item) => item.id && item.models.length > 0);
+  if (!state.apiPlatforms.length) {
+    resetApiPlatforms("`data/api-platforms.xml` 里还没有可用的平台配置。");
+    return;
+  }
+
+  applyApiPlatformSelection(payload.defaultPlatformId, payload.defaultImageModel || "");
+}
+
 function getPromptMode() {
   return form.querySelector('input[name="promptMode"]:checked')?.value || "default";
 }
@@ -980,7 +1117,11 @@ function syncSubmitButtonState() {
   if (state.progressTimer) return;
 
   const promptMode = getPromptMode();
-  const canSubmit = state.baseImageFile && (promptMode === "optimized" ? hasOptimizedPrompt() : hasSourcePrompt());
+  const hasImageTarget = Boolean(state.selectedApiPlatformId && state.selectedImageModel);
+  const canSubmit =
+    hasImageTarget &&
+    state.baseImageFile &&
+    (promptMode === "optimized" ? hasOptimizedPrompt() : hasSourcePrompt());
   submitButton.disabled = !canSubmit;
 }
 
@@ -1191,12 +1332,14 @@ function renderMeta(entry) {
   if (!entry) return;
 
   const values = [
+    entry.apiPlatformName ? `平台 ${entry.apiPlatformName}` : "",
+    entry.imageModel ? `模型 ${entry.imageModel}` : "",
     `比例 ${entry.aspectRatio}`,
     `大小 ${entry.imageSize}`,
     entry.promptMode === "optimized" ? "AI 翻译优化" : "默认提示词",
     entry.enableSearch ? "已开启搜索" : "未开启搜索",
     `${entry.referenceCount || 0} 张参考图`,
-  ];
+  ].filter(Boolean);
 
   values.forEach((value) => {
     const tag = document.createElement("span");
@@ -1439,7 +1582,12 @@ function renderHistory(items) {
     img.loading = "lazy";
     img.decoding = "async";
     time.textContent = formatDate(entry.createdAt);
-    tags.textContent = `${entry.aspectRatio} · ${entry.imageSize}`;
+    tags.textContent = [
+      entry.aspectRatio,
+      entry.imageSize,
+      entry.apiPlatformName || "",
+      entry.imageModel || "",
+    ].filter(Boolean).join(" · ");
     prompt.textContent = "";
 
     viewButton.addEventListener("click", () => renderCurrentResult(entry));
@@ -1514,6 +1662,38 @@ async function loadHistory() {
     state.historyHydrated = true;
   } catch (error) {
     historyList.innerHTML = `<div class="empty-history">历史记录加载失败，请刷新重试。</div>`;
+  }
+}
+
+async function hydrateAuthenticatedWorkspace() {
+  const loaders = [loadApiPlatforms, loadPromptLibrary, loadPromptPersonas, loadHistory];
+  let firstErrorMessage = "";
+
+  for (const loader of loaders) {
+    try {
+      await loader();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "初始化失败，请稍后重试。";
+      if (loader === loadApiPlatforms) {
+        resetApiPlatforms(message);
+        setApiPlatformHint(message, true);
+      }
+      if (!firstErrorMessage) {
+        firstErrorMessage = message;
+      }
+    }
+  }
+
+  try {
+    await applyPendingImageTransfers();
+  } catch (error) {
+    if (!firstErrorMessage) {
+      firstErrorMessage = error instanceof Error ? error.message : "初始化失败，请稍后重试。";
+    }
+  }
+
+  if (firstErrorMessage) {
+    setStatus(firstErrorMessage, true);
   }
 }
 
@@ -1796,6 +1976,16 @@ promptTextarea?.addEventListener("input", () => {
   syncSubmitButtonState();
 });
 
+apiPlatformSelect?.addEventListener("change", () => {
+  applyApiPlatformSelection(apiPlatformSelect.value);
+});
+
+imageModelSelect?.addEventListener("change", () => {
+  state.selectedImageModel = imageModelSelect.value;
+  syncImageModelOptions(state.selectedImageModel);
+  syncSubmitButtonState();
+});
+
 promptPersonaSelect?.addEventListener("change", () => {
   state.selectedPromptPersonaId = promptPersonaSelect.value;
   const activePersona = state.promptPersonas.find((persona) => persona.id === state.selectedPromptPersonaId);
@@ -1829,6 +2019,12 @@ form.addEventListener("submit", async (event) => {
     return;
   }
 
+  if (!state.selectedApiPlatformId || !state.selectedImageModel) {
+    setStatus("请先选择可用的 API 平台和生成模型。", true);
+    syncSubmitButtonState();
+    return;
+  }
+
   const promptMode = getPromptMode();
   let finalPrompt = (promptTextarea.value || "").trim();
   if (promptMode === "optimized") {
@@ -1850,6 +2046,8 @@ form.addEventListener("submit", async (event) => {
   void ensureBrowserNotificationPermission();
 
   const formData = new FormData();
+  formData.set("apiPlatformId", state.selectedApiPlatformId);
+  formData.set("imageModel", state.selectedImageModel);
   formData.set("prompt", finalPrompt);
   formData.set("sourcePrompt", promptTextarea.value || "");
   formData.set("promptMode", promptMode);
@@ -1996,10 +2194,7 @@ loginForm.addEventListener("submit", async (event) => {
     setAuthStatus("");
     passwordInput.value = "";
     setAuthUI(true, payload.passwordEnabled !== false);
-    await loadPromptLibrary();
-    await loadPromptPersonas();
-    await loadHistory();
-    await applyPendingImageTransfers();
+    await hydrateAuthenticatedWorkspace();
   } catch (error) {
     const message = error instanceof Error ? error.message : "登录失败";
     setAuthStatus(message, true);
@@ -2015,6 +2210,7 @@ logoutButton.addEventListener("click", async () => {
     state.promptLibraryContent = "";
     state.promptPersonas = [];
     state.selectedPromptPersonaId = "";
+    resetApiPlatforms("登录后加载 API 平台配置。");
     closePromptLibraryModal();
     closePromptPersonaModal();
     resetPromptPersonaEditor();
@@ -2028,6 +2224,7 @@ logoutButton.addEventListener("click", async () => {
 
 async function bootstrap() {
   try {
+    resetApiPlatforms("正在读取 API 平台配置。");
     renderPromptLibraryOptions();
     renderPromptPersonaOptions();
     syncPromptModeUI();
@@ -2036,14 +2233,13 @@ async function bootstrap() {
     const payload = await readJsonSafely(response);
     setAuthUI(Boolean(payload.authenticated), Boolean(payload.passwordEnabled));
     if (!payload.passwordEnabled || payload.authenticated) {
-      await loadPromptLibrary();
-      await loadPromptPersonas();
-      await loadHistory();
-      await applyPendingImageTransfers();
+      await hydrateAuthenticatedWorkspace();
     } else {
+      resetApiPlatforms("登录后加载 API 平台配置。");
       historyList.innerHTML = `<div class="empty-history">登录后可查看历史记录。</div>`;
     }
   } catch (error) {
+    resetApiPlatforms("API 平台配置初始化失败。");
     historyList.innerHTML = `<div class="empty-history">初始化失败，请刷新重试。</div>`;
   }
 

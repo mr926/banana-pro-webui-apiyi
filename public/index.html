@@ -20,6 +20,21 @@
               <button type="button" id="logout-button" class="ghost-button hidden">退出</button>
             </div>
           </div>
+          <div class="api-config-bar">
+            <label class="api-config-field">
+              <span>API 平台</span>
+              <select id="api-platform-select" class="prompt-select" aria-label="选择 API 平台">
+                <option value="">加载平台配置中</option>
+              </select>
+            </label>
+            <label class="api-config-field">
+              <span>生成模型</span>
+              <select id="image-model-select" class="prompt-select" aria-label="选择生成模型">
+                <option value="">请先选择 API 平台</option>
+              </select>
+            </label>
+          </div>
+          <p id="api-platform-hint" class="api-config-hint">将根据所选平台自动匹配对应的接口地址和密钥。</p>
           <p>按「基础图 → 参数 → 提示词 → 生成」完成一次渲染。界面已简化为高频操作优先。</p>
         </header>
 

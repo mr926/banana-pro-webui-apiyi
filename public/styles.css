@@ -107,6 +107,34 @@ select {
   flex-wrap: wrap;
 }
 
+.api-config-bar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.api-config-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.api-config-field span {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.api-config-hint {
+  margin-top: 10px !important;
+  font-size: 12px;
+}
+
+.api-config-hint.is-error {
+  color: var(--danger);
+}
+
 .eyebrow {
   display: inline-flex;
   align-items: center;
@@ -1339,6 +1367,10 @@ button:focus-visible,
   .prompt-toolbar {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .api-config-bar {
+    grid-template-columns: 1fr;
   }
 
   .section-head-with-preview {

@@ -39,12 +39,18 @@ THUMB_DIR = GENERATED_DIR / "thumbs"
 PERSONAS_DIR = DATA_DIR / "personas"
 HISTORY_FILE = DATA_DIR / "history.json"
 PROMPT_LIBRARY_FILE = DATA_DIR / "prompt-library.md"
+API_PLATFORMS_FILE = DATA_DIR / "api-platforms.xml"
 ENV_FILE = ROOT_DIR / ".env"
 
-DEFAULT_API_URL = "https://api.apiyi.com/v1beta/models/gemini-3-pro-image-preview:generateContent"
+DEFAULT_IMAGE_MODEL = "gemini-3-pro-image-preview"
+DEFAULT_API_URL = "https://api.apiyi.com/v1beta/models/{model}:generateContent"
 DEFAULT_PROMPT_OPTIMIZER_BASE_URL = "https://api.apiyi.com/v1"
 DEFAULT_PROMPT_OPTIMIZER_URL = "https://api.apiyi.com/v1/chat/completions"
 DEFAULT_PROMPT_OPTIMIZER_MODEL = "gpt-5.4"
+NANO_BANANA_COMPAT_MODEL = "gemini-2.5-flash-image"
+DEFAULT_IMAGE_PLATFORM_ID = "default"
+DEFAULT_IMAGE_PLATFORM_NAME = "默认平台"
+DEFAULT_MODEL_SEPARATOR = "|"
 DEFAULT_PORT = 8787
 TIMEOUT_MAP = {"1K": 180, "2K": 300, "4K": 360}
 PROMPT_OPTIMIZER_TIMEOUT = 90
@@ -65,6 +71,8 @@ def ensure_dirs() -> None:
         HISTORY_FILE.write_text("[]", encoding="utf-8")
     if not PROMPT_LIBRARY_FILE.exists():
         PROMPT_LIBRARY_FILE.write_text("", encoding="utf-8")
+    if not API_PLATFORMS_FILE.exists():
+        API_PLATFORMS_FILE.write_text(build_default_api_platforms_xml(), encoding="utf-8")
 
 
 def load_env_file() -> Dict[str, str]:
@@ -94,6 +102,215 @@ def get_bool_setting(name: str, default: bool = False) -> bool:
     fallback = "true" if default else "false"
     value = get_setting(name, fallback)
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+class ImagePlatformConfigError(Exception):
+    def __init__(self, message: str, status_code: int = 500):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def platform_id_slug(value: str, fallback: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+    return slug or fallback
+
+
+def get_xml_child_text(parent: ET.Element, tag: str, default: str = "") -> str:
+    node = parent.find(tag)
+    if node is None or node.text is None:
+        return default
+    return node.text.strip()
+
+
+def split_image_models(raw_models: str, separator: str = "") -> List[str]:
+    normalized = str(raw_models or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not normalized:
+        return []
+
+    if separator:
+        candidates = normalized.split(separator)
+    else:
+        candidates = re.split(r"[\n,，;；|]+", normalized)
+
+    result: List[str] = []
+    seen = set()
+    for item in candidates:
+        model = str(item or "").strip()
+        if not model or model in seen:
+            continue
+        seen.add(model)
+        result.append(model)
+    return result
+
+
+def build_default_api_platforms_xml() -> str:
+    root = ET.Element("apiPlatforms")
+    root.set("version", "1")
+
+    platform = ET.SubElement(root, "platform")
+    platform.set("id", DEFAULT_IMAGE_PLATFORM_ID)
+    platform.set("name", DEFAULT_IMAGE_PLATFORM_NAME)
+    platform.set("default", "true")
+
+    url_node = ET.SubElement(platform, "url")
+    url_node.text = get_setting("BANANA_PRO_API_URL", DEFAULT_API_URL)
+
+    key_node = ET.SubElement(platform, "key")
+    key_node.text = get_setting("BANANA_PRO_API_KEY", "")
+
+    models_node = ET.SubElement(platform, "models")
+    models_node.set("separator", DEFAULT_MODEL_SEPARATOR)
+    models_node.text = get_setting("BANANA_PRO_IMAGE_MODEL", DEFAULT_IMAGE_MODEL)
+
+    if hasattr(ET, "indent"):
+        ET.indent(root, space="  ")
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True).decode("utf-8")
+
+
+def read_image_platforms() -> List[dict]:
+    try:
+        tree = ET.parse(API_PLATFORMS_FILE)
+    except FileNotFoundError:
+        ensure_dirs()
+        tree = ET.parse(API_PLATFORMS_FILE)
+    except ET.ParseError as exc:
+        raise ImagePlatformConfigError(
+            f"`{API_PLATFORMS_FILE.name}` 格式不正确，请检查 XML 语法：{exc}",
+            status_code=500,
+        ) from exc
+    except OSError as exc:
+        raise ImagePlatformConfigError(
+            f"读取 `{API_PLATFORMS_FILE.name}` 失败：{exc}",
+            status_code=500,
+        ) from exc
+
+    root = tree.getroot()
+    if root.tag != "apiPlatforms":
+        raise ImagePlatformConfigError(
+            f"`{API_PLATFORMS_FILE.name}` 根节点必须是 `<apiPlatforms>`。",
+            status_code=500,
+        )
+
+    platforms: List[dict] = []
+    used_ids = set()
+    for index, node in enumerate(root.findall("platform"), start=1):
+        raw_name = node.get("name") or node.get("label") or f"平台 {index}"
+        fallback_id = f"platform-{index}"
+        platform_id = platform_id_slug(node.get("id") or raw_name, fallback_id)
+        unique_id = platform_id
+        duplicate_index = 2
+        while unique_id in used_ids:
+            unique_id = f"{platform_id}-{duplicate_index}"
+            duplicate_index += 1
+        used_ids.add(unique_id)
+
+        api_url = get_xml_child_text(node, "url", get_setting("BANANA_PRO_API_URL", DEFAULT_API_URL))
+        api_key = get_xml_child_text(node, "key", "")
+        models_node = node.find("models")
+        model_separator = (
+            (models_node.get("separator", "") if models_node is not None else "")
+            or node.get("modelSeparator", "")
+            or DEFAULT_MODEL_SEPARATOR
+        )
+        raw_models = get_xml_child_text(node, "models", get_setting("BANANA_PRO_IMAGE_MODEL", DEFAULT_IMAGE_MODEL))
+        models = split_image_models(raw_models, model_separator)
+        if not models:
+            models = [DEFAULT_IMAGE_MODEL]
+
+        requested_default_model = (node.get("defaultModel") or "").strip()
+        default_model = requested_default_model if requested_default_model in models else models[0]
+        is_default = str(node.get("default", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+        platforms.append(
+            {
+                "id": unique_id,
+                "name": raw_name.strip() or f"平台 {index}",
+                "api_url": api_url.strip() or DEFAULT_API_URL,
+                "api_key": api_key.strip(),
+                "models": models,
+                "default_model": default_model,
+                "is_default": is_default,
+            }
+        )
+
+    if not platforms:
+        raise ImagePlatformConfigError(
+            f"`{API_PLATFORMS_FILE.name}` 里至少需要一个 `<platform>` 配置。",
+            status_code=500,
+        )
+
+    return platforms
+
+
+def get_default_image_platform(platforms: List[dict]) -> dict:
+    for platform in platforms:
+        if platform.get("is_default"):
+            return platform
+    return platforms[0]
+
+
+def build_image_platforms_response(platforms: List[dict]) -> dict:
+    default_platform = get_default_image_platform(platforms)
+    return {
+        "items": [
+            {
+                "id": platform["id"],
+                "name": platform["name"],
+                "models": platform["models"],
+                "defaultModel": platform["default_model"],
+            }
+            for platform in platforms
+        ],
+        "defaultPlatformId": default_platform["id"],
+        "defaultImageModel": default_platform["default_model"],
+        "filename": API_PLATFORMS_FILE.name,
+    }
+
+
+def resolve_image_generation_platform(platform_id: str = "", image_model: str = "") -> dict:
+    platforms = read_image_platforms()
+    selected_platform: Optional[dict] = None
+    normalized_platform_id = str(platform_id or "").strip()
+    if normalized_platform_id:
+        selected_platform = next((item for item in platforms if item["id"] == normalized_platform_id), None)
+        if selected_platform is None:
+            raise ImagePlatformConfigError("未找到所选的 API 平台，请刷新页面后重试。", status_code=400)
+    else:
+        selected_platform = get_default_image_platform(platforms)
+
+    requested_model = str(image_model or "").strip()
+    if requested_model:
+        if requested_model not in selected_platform["models"]:
+            raise ImagePlatformConfigError(
+                f"API 平台「{selected_platform['name']}」未配置模型 `{requested_model}`。",
+                status_code=400,
+            )
+        selected_model = requested_model
+    else:
+        selected_model = selected_platform["default_model"]
+
+    api_key = selected_platform["api_key"] or get_setting("BANANA_PRO_API_KEY", "")
+    if not api_key:
+        raise ImagePlatformConfigError(
+            f"API 平台「{selected_platform['name']}」缺少 key，请先在 `{API_PLATFORMS_FILE.name}` 中配置。",
+            status_code=500,
+        )
+
+    return {
+        "platform_id": selected_platform["id"],
+        "platform_name": selected_platform["name"],
+        "api_key": api_key,
+        "api_url": resolve_image_generation_api_url(selected_platform["api_url"], selected_model),
+        "image_model": selected_model,
+    }
+
+
+def get_default_image_platform_api_key() -> str:
+    try:
+        platforms = read_image_platforms()
+        return get_default_image_platform(platforms).get("api_key", "").strip() or get_setting("BANANA_PRO_API_KEY", "")
+    except ImagePlatformConfigError:
+        return get_setting("BANANA_PRO_API_KEY", "")
 
 
 def is_google_generative_endpoint(api_url: str) -> bool:
@@ -155,7 +372,7 @@ def describe_upstream_exception(exc: Exception) -> str:
                 return (
                     "上游连接被中断（Software caused connection abort）。"
                     "这通常是网络抖动、代理异常或上游服务主动断开导致的，请重试；"
-                    "如果持续出现，请检查 BANANA_PRO_API_URL 对应服务是否稳定。"
+                    "如果持续出现，请检查当前 API 平台对应服务是否稳定。"
                 )
             if detail:
                 return f"{reason.__class__.__name__}: {detail}"
@@ -166,7 +383,7 @@ def describe_upstream_exception(exc: Exception) -> str:
         return (
             "上游连接被中断（Software caused connection abort）。"
             "这通常是网络抖动、代理异常或上游服务主动断开导致的，请重试；"
-            "如果持续出现，请检查 BANANA_PRO_API_URL 对应服务是否稳定。"
+            "如果持续出现，请检查当前 API 平台对应服务是否稳定。"
         )
     if detail:
         return f"{exc.__class__.__name__}: {detail}"
@@ -422,6 +639,9 @@ def build_generation_metadata_xml(
     enable_search: bool,
     base_image_name: str,
     reference_count: int,
+    api_platform_id: str,
+    api_platform_name: str,
+    image_model: str,
     mime_type: str,
 ) -> bytes:
     root = ET.Element("bananaProGeneration")
@@ -437,6 +657,9 @@ def build_generation_metadata_xml(
         "enableSearch": "true" if enable_search else "false",
         "baseImageName": base_image_name,
         "referenceCount": str(reference_count),
+        "apiPlatformId": api_platform_id,
+        "apiPlatformName": api_platform_name,
+        "imageModel": image_model,
         "mimeType": mime_type,
     }
     for key, value in fields.items():
@@ -764,22 +987,65 @@ def map_output_size(size_key: str) -> str:
     return mapping.get(size_key.upper(), "4K")
 
 
-def resolve_image_generation_api_url(api_url: str) -> str:
-    parsed = urlparse(str(api_url or "").strip())
+def normalize_image_model(model: str, default: str = DEFAULT_IMAGE_MODEL) -> str:
+    normalized = str(model or "").strip()
+    return normalized or default
+
+
+def replace_image_model_in_path(path: str, model: str) -> str:
+    encoded_model = quote(model, safe="._-")
+    return re.sub(
+        r"(/models/)[^/:]+(:generateContent)$",
+        rf"\1{encoded_model}\2",
+        path,
+    )
+
+
+def resolve_image_generation_api_url(api_url: str, image_model: str) -> str:
+    configured_url = str(api_url or "").strip() or DEFAULT_API_URL
+    normalized_model = str(image_model or "").strip()
+
+    if "{model}" in configured_url:
+        return configured_url.replace(
+            "{model}",
+            quote(normalize_image_model(normalized_model), safe="._-"),
+        )
+
+    parsed = urlparse(configured_url)
     path = parsed.path.rstrip("/")
     if path == "/v1/draw/nano-banana":
         # This app sends Gemini official payloads. Some providers expose a native
         # draw endpoint at /v1/draw/nano-banana that expects a top-level prompt
         # field, but the same host also supports Gemini-compatible paths.
+        compat_model = normalize_image_model(normalized_model, default=NANO_BANANA_COMPAT_MODEL)
         return urlunparse(
             parsed._replace(
-                path="/v1beta/models/gemini-2.5-flash-image:generateContent",
+                path=f"/v1beta/models/{quote(compat_model, safe='._-')}:generateContent",
                 params="",
                 query="",
                 fragment="",
             )
         )
-    return api_url
+
+    if normalized_model:
+        if path.endswith(":generateContent") and "/models/" in path:
+            return urlunparse(parsed._replace(path=replace_image_model_in_path(path, normalized_model)))
+
+        if re.fullmatch(r"/v\d+(?:beta(?:\d+)?)?", path):
+            return urlunparse(
+                parsed._replace(
+                    path=f"{path}/models/{quote(normalized_model, safe='._-')}:generateContent"
+                )
+            )
+
+        if re.fullmatch(r"/v\d+(?:beta(?:\d+)?)?/models", path):
+            return urlunparse(
+                parsed._replace(
+                    path=f"{path}/{quote(normalized_model, safe='._-')}:generateContent"
+                )
+            )
+
+    return configured_url
 
 
 def build_prompt(user_prompt: str, reference_count: int) -> str:
@@ -1170,6 +1436,15 @@ class AppHandler(BaseHTTPRequestHandler):
                 },
             )
 
+        if parsed.path == "/api/image-platforms":
+            if not self.ensure_authenticated():
+                return
+            try:
+                payload = build_image_platforms_response(read_image_platforms())
+            except ImagePlatformConfigError as exc:
+                return json_response(self, exc.status_code, {"error": str(exc)})
+            return json_response(self, 200, payload)
+
         if parsed.path == "/api/prompt-library":
             if not self.ensure_authenticated():
                 return
@@ -1380,22 +1655,11 @@ class AppHandler(BaseHTTPRequestHandler):
         )
 
     def handle_generate(self) -> None:
-        api_key = get_setting("BANANA_PRO_API_KEY")
-        api_url = get_setting("BANANA_PRO_API_URL", DEFAULT_API_URL)
-        resolved_api_url = resolve_image_generation_api_url(api_url)
-
         if Image is None:
             return json_response(
                 self,
                 500,
                 {"error": "缺少 Pillow 依赖，无法生成历史缩略图，请先安装 Pillow。"},
-            )
-
-        if not api_key:
-            return json_response(
-                self,
-                500,
-                {"error": "缺少 BANANA_PRO_API_KEY，请先在 .env 中配置。"},
             )
 
         try:
@@ -1413,6 +1677,13 @@ class AppHandler(BaseHTTPRequestHandler):
         form = self.parse_multipart_form()
         if form is None:
             return
+
+        selected_platform_id = str(form.get("apiPlatformId", "")).strip()
+        requested_image_model = str(form.get("imageModel", "")).strip()
+        try:
+            image_platform = resolve_image_generation_platform(selected_platform_id, requested_image_model)
+        except ImagePlatformConfigError as exc:
+            return json_response(self, exc.status_code, {"error": str(exc)})
 
         prompt = form.get("prompt", "")
         source_prompt = form.get("sourcePrompt", "")
@@ -1451,9 +1722,9 @@ class AppHandler(BaseHTTPRequestHandler):
         try:
             body = json.dumps(payload).encode("utf-8")
             response_payload = post_json_to_upstream(
-                api_url=resolved_api_url,
+                api_url=image_platform["api_url"],
                 body=body,
-                api_key=api_key,
+                api_key=image_platform["api_key"],
                 timeout=TIMEOUT_MAP.get(image_size, 300),
             )
         except UpstreamHttpError as exc:
@@ -1531,6 +1802,9 @@ class AppHandler(BaseHTTPRequestHandler):
                     enable_search=enable_search,
                     base_image_name=base_upload["filename"],
                     reference_count=len(ref_uploads),
+                    api_platform_id=image_platform["platform_id"],
+                    api_platform_name=image_platform["platform_name"],
+                    image_model=image_platform["image_model"],
                     mime_type=mime_type,
                 )
                 uploaded = upload_generated_assets_to_oss(
@@ -1564,6 +1838,9 @@ class AppHandler(BaseHTTPRequestHandler):
             "enableSearch": enable_search,
             "baseImageName": base_upload["filename"],
             "referenceCount": len(ref_uploads),
+            "apiPlatformId": image_platform["platform_id"],
+            "apiPlatformName": image_platform["platform_name"],
+            "imageModel": image_platform["image_model"],
             "imageUrl": f"/generated/{filename}",
             "thumbUrl": get_thumbnail_url(file_id),
             "downloadName": f"banana-pro-{file_id}{extension_for_mime(mime_type)}",
@@ -1630,7 +1907,7 @@ class AppHandler(BaseHTTPRequestHandler):
         return json_response(self, 200, {"ok": True, "item": persona})
 
     def handle_optimize_prompt(self) -> None:
-        api_key = get_setting("BANANA_PRO_LLM_API_KEY") or get_setting("BANANA_PRO_API_KEY")
+        api_key = get_setting("BANANA_PRO_LLM_API_KEY") or get_default_image_platform_api_key()
         api_url = get_setting("BANANA_PRO_LLM_API_URL")
         llm_model = get_setting("BANANA_PRO_LLM_MODEL", DEFAULT_PROMPT_OPTIMIZER_MODEL).strip() or DEFAULT_PROMPT_OPTIMIZER_MODEL
         if not api_url:
@@ -1643,7 +1920,7 @@ class AppHandler(BaseHTTPRequestHandler):
             return json_response(
                 self,
                 500,
-                {"error": "缺少 BANANA_PRO_LLM_API_KEY，请先在 .env 中配置。"},
+                {"error": "缺少 BANANA_PRO_LLM_API_KEY，且默认图片平台也没有可用 key，请先在 .env 或 data/api-platforms.xml 中配置。"},
             )
 
         try:
