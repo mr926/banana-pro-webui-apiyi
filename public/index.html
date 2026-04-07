@@ -8,42 +8,51 @@
   </head>
   <body>
     <div class="page-shell">
+      <!-- ── 左侧控制面板 ── -->
       <aside class="control-panel">
+        <!-- 品牌头 -->
         <header class="brand-card">
           <div class="brand-topbar">
-            <div>
-              <div class="eyebrow">Banana Pro</div>
-              <h1>图生图工作台</h1>
+            <div class="brand-title">
+              <span class="eyebrow">Pro</span>
+              <div>
+                <div class="brand-name">Banana 图生图</div>
+                <div class="brand-sub">工作台</div>
+              </div>
             </div>
             <div class="brand-actions">
-              <a href="/history.html" class="ghost-button">历史相册</a>
+              <a href="/history.html" class="ghost-button">相册</a>
               <button type="button" id="logout-button" class="ghost-button hidden">退出</button>
             </div>
           </div>
+          <!-- API 配置 -->
           <div class="api-config-bar">
             <label class="api-config-field">
-              <span>API 平台</span>
+              <span>平台</span>
               <select id="api-platform-select" class="prompt-select" aria-label="选择 API 平台">
-                <option value="">加载平台配置中</option>
+                <option value="">加载中…</option>
               </select>
             </label>
             <label class="api-config-field">
-              <span>生成模型</span>
+              <span>模型</span>
               <select id="image-model-select" class="prompt-select" aria-label="选择生成模型">
-                <option value="">请先选择 API 平台</option>
+                <option value="">请先选择平台</option>
               </select>
             </label>
           </div>
-          <p id="api-platform-hint" class="api-config-hint">将根据所选平台自动匹配对应的接口地址和密钥。</p>
-          <p>按「基础图 → 参数 → 提示词 → 生成」完成一次渲染。界面已简化为高频操作优先。</p>
+          <p id="api-platform-hint" class="api-config-hint">将根据所选平台自动匹配接口地址和密钥。</p>
         </header>
 
         <form id="generate-form" class="panel-stack">
+          <!-- Step 1: 基础图 -->
           <section class="panel-card">
-            <div class="section-head section-head-upload">
-              <div>
-                <h2>1. 基础结构图（必填）</h2>
-                <p>上传主约束图，比例默认自动继承。</p>
+            <div class="section-label">
+              <span class="section-label-num">1</span>
+              基础结构图（必填）
+            </div>
+            <div class="upload-row">
+              <div class="upload-row-info">
+                <p>上传主约束图，比例默认自动继承</p>
               </div>
               <label class="upload-mini" for="base-image" aria-label="上传基础图">
                 <input id="base-image" name="baseImage" type="file" accept="image/*" required />
@@ -54,11 +63,15 @@
             <div id="base-preview" class="thumb-grid single"></div>
           </section>
 
+          <!-- Step 2: 参考图 -->
           <section class="panel-card">
-            <div class="section-head section-head-upload">
-              <div>
-                <h2>2. 风格参考图（可选）</h2>
-                <p>最多 6 张，用于补充材质、光线和氛围。</p>
+            <div class="section-label">
+              <span class="section-label-num">2</span>
+              风格参考图（可选，最多 6 张）
+            </div>
+            <div class="upload-row">
+              <div class="upload-row-info">
+                <p>补充材质、光线和氛围</p>
               </div>
               <label class="upload-mini" for="reference-images" aria-label="上传参考图">
                 <input id="reference-images" name="referenceImages" type="file" accept="image/*" multiple />
@@ -69,137 +82,108 @@
             <div id="reference-preview" class="thumb-grid"></div>
           </section>
 
+          <!-- Step 3: 参数 -->
           <section class="panel-card">
-            <div class="setting-group">
-              <div class="section-head narrow section-head-with-preview">
-                <div>
-                  <h2>3. 图片比例</h2>
-                  <p>推荐自动，必要时手动覆盖。</p>
+            <div class="section-label">
+              <span class="section-label-num">3</span>
+              参数
+            </div>
+
+            <!-- 比例 + 预览 -->
+            <div class="setting-row" style="margin-bottom:6px;">
+              <span class="setting-row-label">图片比例<small>推荐自动，必要时手动覆盖</small></span>
+              <div class="ratio-orientation-preview" id="ratio-orientation-preview">
+                <div class="orientation-card" data-orientation="landscape">
+                  <span class="orientation-shape orientation-shape-landscape"></span>
                 </div>
-                <div class="ratio-orientation-preview" id="ratio-orientation-preview">
-                  <div class="orientation-card" data-orientation="landscape">
-                    <span class="orientation-shape orientation-shape-landscape"></span>
-                  </div>
-                  <div class="orientation-card" data-orientation="portrait">
-                    <span class="orientation-shape orientation-shape-portrait"></span>
-                  </div>
+                <div class="orientation-card" data-orientation="portrait">
+                  <span class="orientation-shape orientation-shape-portrait"></span>
                 </div>
               </div>
-              <div class="chip-grid" id="aspect-ratio-group">
-                <label class="chip">
-                  <input type="radio" name="aspectRatio" value="auto" checked />
-                  <span><strong>自动</strong></span>
-                </label>
-                <label class="chip">
-                  <input type="radio" name="aspectRatio" value="1:1" />
-                  <span><strong>1:1</strong></span>
-                </label>
-                <label class="chip">
-                  <input type="radio" name="aspectRatio" value="4:3" />
-                  <span><strong>4:3</strong></span>
-                </label>
-                <label class="chip">
-                  <input type="radio" name="aspectRatio" value="3:4" />
-                  <span><strong>3:4</strong></span>
-                </label>
-                <label class="chip">
-                  <input type="radio" name="aspectRatio" value="16:9" />
-                  <span><strong>16:9</strong></span>
-                </label>
-                <label class="chip">
-                  <input type="radio" name="aspectRatio" value="9:16" />
-                  <span><strong>9:16</strong></span>
-                </label>
-                <label class="chip">
-                  <input type="radio" name="aspectRatio" value="5:4" />
-                  <span><strong>5:4</strong></span>
-                </label>
-                <label class="chip">
-                  <input type="radio" name="aspectRatio" value="4:5" />
-                  <span><strong>4:5</strong></span>
-                </label>
+            </div>
+            <div class="chip-grid" id="aspect-ratio-group" style="margin-bottom:8px;">
+              <label class="chip"><input type="radio" name="aspectRatio" value="auto" checked /><span><strong>自动</strong></span></label>
+              <label class="chip"><input type="radio" name="aspectRatio" value="1:1" /><span><strong>1:1</strong></span></label>
+              <label class="chip"><input type="radio" name="aspectRatio" value="4:3" /><span><strong>4:3</strong></span></label>
+              <label class="chip"><input type="radio" name="aspectRatio" value="3:4" /><span><strong>3:4</strong></span></label>
+              <label class="chip"><input type="radio" name="aspectRatio" value="16:9" /><span><strong>16:9</strong></span></label>
+              <label class="chip"><input type="radio" name="aspectRatio" value="9:16" /><span><strong>9:16</strong></span></label>
+              <label class="chip"><input type="radio" name="aspectRatio" value="5:4" /><span><strong>5:4</strong></span></label>
+              <label class="chip"><input type="radio" name="aspectRatio" value="4:5" /><span><strong>4:5</strong></span></label>
+            </div>
+
+            <!-- 大小 + 搜索 同行 -->
+            <div class="setting-row">
+              <span class="setting-row-label">生成大小<small>越大越清晰，耗时更长</small></span>
+              <div class="segment-grid size-segment-grid">
+                <label class="segment"><input type="radio" name="imageSize" value="1K" /><span>1K</span></label>
+                <label class="segment"><input type="radio" name="imageSize" value="2K" /><span>2K</span></label>
+                <label class="segment"><input type="radio" name="imageSize" value="4K" checked /><span>4K</span></label>
               </div>
             </div>
 
-            <div class="setting-group">
-              <div class="size-inline-head">
-                <h2>生成大小</h2>
-                <div class="segment-grid size-segment-grid">
-                  <label class="segment">
-                    <input type="radio" name="imageSize" value="1K" />
-                    <span>1K</span>
-                  </label>
-                  <label class="segment">
-                    <input type="radio" name="imageSize" value="2K" />
-                    <span>2K</span>
-                  </label>
-                  <label class="segment">
-                    <input type="radio" name="imageSize" value="4K" checked />
-                    <span>4K</span>
-                  </label>
-                </div>
-              </div>
-              <p class="inline-hint">越大越清晰，耗时通常更长。</p>
-            </div>
+            <div class="compact-divider"></div>
 
             <label class="toggle-row">
               <div>
                 <strong>网络搜索增强</strong>
-                <p>在需要补充公开信息时启用。</p>
+                <p>在需要补充公开信息时启用</p>
               </div>
               <span class="switch">
                 <input type="checkbox" name="enableSearch" value="true" />
                 <span class="slider"></span>
               </span>
             </label>
+          </section>
 
-            <div class="setting-group">
-              <div class="section-head narrow">
-                <h2>4. 提示词</h2>
-                <p>描述希望保留的结构与想得到的风格细节。</p>
-              </div>
-              <div class="segment-grid prompt-mode-grid">
-                <label class="segment">
-                  <input type="radio" name="promptMode" value="default" checked />
-                  <span>直接输入</span>
-                </label>
-                <label class="segment">
-                  <input type="radio" name="promptMode" value="optimized" />
-                  <span>AI 翻译优化</span>
-                </label>
-              </div>
-              <div class="prompt-toolbar">
-                <select id="prompt-library-select" class="prompt-select">
-                  <option value="">从提示词列表中选择并插入</option>
-                </select>
-                <button type="button" id="manage-prompt-library-button" class="ghost-button">管理提示词</button>
-              </div>
-              <textarea
-                id="prompt"
-                name="prompt"
-                rows="4"
-                placeholder="例如：保留建筑结构，生成清晨自然光的现代外立面效果图，浅灰石材与木饰面，氛围克制、真实。"
-              ></textarea>
-              <div id="optimized-prompt-panel" class="optimized-prompt-panel hidden">
-                <div class="persona-toolbar">
-                  <div class="prompt-toolbar">
-                    <select id="prompt-persona-select" class="prompt-select">
-                      <option value="">选择转译人设</option>
-                    </select>
-                    <button type="button" id="manage-prompt-persona-button" class="ghost-button">管理</button>
-                  </div>
-                  <p id="prompt-persona-summary" class="persona-summary"></p>
+          <!-- Step 4: 提示词 -->
+          <section class="panel-card">
+            <div class="section-label">
+              <span class="section-label-num">4</span>
+              提示词
+            </div>
+
+            <!-- 模式切换 -->
+            <div class="segment-grid prompt-mode-grid">
+              <label class="segment"><input type="radio" name="promptMode" value="default" checked /><span>直接输入</span></label>
+              <label class="segment"><input type="radio" name="promptMode" value="optimized" /><span>AI 翻译优化</span></label>
+            </div>
+
+            <!-- 提示词库 -->
+            <div class="prompt-toolbar">
+              <select id="prompt-library-select" class="prompt-select">
+                <option value="">从提示词列表选择并插入</option>
+              </select>
+              <button type="button" id="manage-prompt-library-button" class="ghost-button">管理</button>
+            </div>
+
+            <textarea
+              id="prompt"
+              name="prompt"
+              rows="3"
+              placeholder="例如：保留建筑结构，生成清晨自然光的现代外立面效果图，浅灰石材与木饰面，氛围克制、真实。"
+            ></textarea>
+
+            <!-- AI 优化面板（隐藏） -->
+            <div id="optimized-prompt-panel" class="optimized-prompt-panel hidden">
+              <div class="persona-toolbar">
+                <div class="prompt-toolbar">
+                  <select id="prompt-persona-select" class="prompt-select">
+                    <option value="">选择转译人设</option>
+                  </select>
+                  <button type="button" id="manage-prompt-persona-button" class="ghost-button">管理</button>
                 </div>
-                <button type="button" id="optimize-prompt-button" class="primary-button optimize-button">提示词优化</button>
-                <div id="optimize-progress" class="inline-progress hidden"></div>
-                <textarea
-                  id="optimized-prompt"
-                  rows="5"
-                  placeholder="这里会显示 AI 翻译优化后的英文提示词，生成时会发送这里的内容。"
-                  readonly
-                ></textarea>
-                <p id="optimize-status" class="form-status inline-status"></p>
+                <p id="prompt-persona-summary" class="persona-summary"></p>
               </div>
+              <button type="button" id="optimize-prompt-button" class="primary-button optimize-button">提示词优化</button>
+              <div id="optimize-progress" class="inline-progress hidden"></div>
+              <textarea
+                id="optimized-prompt"
+                rows="4"
+                placeholder="这里会显示 AI 翻译优化后的英文提示词，生成时会发送这里的内容。"
+                readonly
+              ></textarea>
+              <p id="optimize-status" class="form-status inline-status"></p>
             </div>
 
             <button type="submit" id="submit-button" class="primary-button">开始生成</button>
@@ -208,13 +192,12 @@
         </form>
       </aside>
 
+      <!-- ── 右侧结果区 ── -->
       <main class="result-panel">
+        <!-- 当前结果 -->
         <section class="preview-card">
           <div class="preview-head">
-            <div>
-              <div class="eyebrow">Preview</div>
-              <h2>当前结果</h2>
-            </div>
+            <h2>当前结果</h2>
             <div id="result-meta" class="result-meta"></div>
           </div>
 
@@ -227,12 +210,10 @@
           </div>
         </section>
 
+        <!-- 历史记录 -->
         <section class="history-card">
           <div class="preview-head">
-            <div>
-              <div class="eyebrow">History</div>
-              <h2>最近历史</h2>
-            </div>
+            <h2>最近历史</h2>
             <button type="button" id="refresh-history" class="ghost-button">刷新</button>
           </div>
           <div id="history-list" class="history-list"></div>
@@ -248,42 +229,33 @@
       </main>
     </div>
 
+    <!-- ── 提示词库 Modal ── -->
     <div id="prompt-library-modal" class="modal-overlay hidden" aria-hidden="true">
       <div class="modal-card">
         <div class="modal-head">
-          <div>
-            <div class="eyebrow">Prompt Library</div>
-            <h2>管理提示词</h2>
-          </div>
+          <h2>管理提示词</h2>
           <button type="button" id="close-prompt-library-modal" class="ghost-button">关闭</button>
         </div>
-        <p class="modal-intro">一行对应一个下拉列表选项，内容会保存到 `data/prompt-library.md`。</p>
-        <textarea
-          id="prompt-library-editor"
-          class="modal-textarea"
-          rows="14"
-          placeholder="每行输入一条提示词"
-        ></textarea>
+        <p class="modal-intro">一行对应一个下拉选项，内容保存到 <code>data/prompt-library.md</code>。</p>
+        <textarea id="prompt-library-editor" class="modal-textarea" rows="12" placeholder="每行输入一条提示词"></textarea>
         <div class="modal-actions">
-          <button type="button" id="save-prompt-library-button" class="primary-button modal-primary">保存提示词</button>
+          <button type="button" id="save-prompt-library-button" class="primary-button modal-primary">保存</button>
         </div>
         <p id="prompt-library-modal-status" class="form-status inline-status"></p>
       </div>
     </div>
 
+    <!-- ── 人设管理 Modal ── -->
     <div id="prompt-persona-modal" class="modal-overlay hidden" aria-hidden="true">
       <div class="modal-card modal-card-wide">
         <div class="modal-head">
-          <div>
-            <div class="eyebrow">Prompt Personas</div>
-            <h2>管理提示词优化人格</h2>
-          </div>
+          <h2>管理提示词优化人格</h2>
           <button type="button" id="close-prompt-persona-modal" class="ghost-button">关闭</button>
         </div>
         <div class="modal-two-column">
           <section class="modal-panel">
             <div class="modal-panel-head">
-              <h3>上传新 md 文件</h3>
+              <h3>上传 md 文件</h3>
             </div>
             <div class="prompt-toolbar">
               <label class="ghost-button prompt-import">
@@ -292,25 +264,20 @@
               </label>
               <button type="button" id="upload-prompt-persona-button" class="ghost-button">上传</button>
             </div>
-            <p class="modal-intro compact">md 文件格式：第一行名称，第二行简介，其余内容为系统提示词正文。</p>
+            <p class="modal-intro compact">格式：第一行名称，第二行简介，其余为系统提示词。</p>
             <div id="prompt-persona-list" class="persona-list"></div>
           </section>
           <section class="modal-panel">
             <div class="modal-panel-head">
               <h3>编辑当前人格</h3>
               <div class="persona-editor-tools">
-                <button type="button" id="create-prompt-persona-button" class="ghost-button">新建人格</button>
+                <button type="button" id="create-prompt-persona-button" class="ghost-button">新建</button>
                 <span id="prompt-persona-filename" class="meta-pill">未选择</span>
               </div>
             </div>
             <label class="modal-field">
               <span>文件名（.md）</span>
-              <input
-                id="prompt-persona-filename-input"
-                class="auth-input modal-input"
-                type="text"
-                placeholder="例如：architectural-director.md"
-              />
+              <input id="prompt-persona-filename-input" class="auth-input modal-input" type="text" placeholder="architectural-director.md" />
             </label>
             <label class="modal-field">
               <span>名称</span>
@@ -322,16 +289,11 @@
             </label>
             <label class="modal-field">
               <span>正文</span>
-              <textarea
-                id="prompt-persona-content-input"
-                class="modal-textarea"
-                rows="12"
-                placeholder="这里填写系统提示词正文"
-              ></textarea>
+              <textarea id="prompt-persona-content-input" class="modal-textarea" rows="10" placeholder="这里填写系统提示词正文"></textarea>
             </label>
             <div class="modal-actions split">
               <button type="button" id="save-prompt-persona-button" class="primary-button modal-primary">保存修改</button>
-              <button type="button" id="delete-prompt-persona-button" class="danger-button">删除当前人格</button>
+              <button type="button" id="delete-prompt-persona-button" class="danger-button">删除人格</button>
             </div>
             <p id="prompt-persona-modal-status" class="form-status inline-status"></p>
           </section>
@@ -339,6 +301,7 @@
       </div>
     </div>
 
+    <!-- ── 认证 Overlay ── -->
     <div id="auth-overlay" class="auth-overlay hidden" aria-hidden="true">
       <form id="login-form" class="auth-card">
         <div class="eyebrow">Protected</div>
@@ -351,6 +314,7 @@
       </form>
     </div>
 
+    <!-- ── Templates ── -->
     <template id="progress-template">
       <div class="progress-shell">
         <div class="progress-track">
@@ -381,7 +345,7 @@
           <div class="history-actions">
             <button type="button" class="history-view ghost-button">查看</button>
             <a class="history-download ghost-button" download>下载</a>
-            <button type="button" class="history-copy ghost-button">复制提示词</button>
+            <button type="button" class="history-copy ghost-button">复制</button>
             <button type="button" class="history-delete danger-button">删除</button>
           </div>
         </div>
@@ -390,4 +354,4 @@
 
     <script src="/app.js" defer></script>
   </body>
-  </html>
+</html>
