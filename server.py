@@ -640,6 +640,7 @@ def build_generation_metadata_xml(
     image_size: str,
     enable_search: bool,
     base_image_name: str,
+    base_image_sha256: str,
     reference_count: int,
     api_platform_id: str,
     api_platform_name: str,
@@ -658,6 +659,7 @@ def build_generation_metadata_xml(
         "imageSize": image_size,
         "enableSearch": "true" if enable_search else "false",
         "baseImageName": base_image_name,
+        "baseImageSha256": base_image_sha256,
         "referenceCount": str(reference_count),
         "apiPlatformId": api_platform_id,
         "apiPlatformName": api_platform_name,
@@ -922,8 +924,14 @@ def safe_name(name: str) -> str:
 
 
 def infer_mime_type(filename: str, provided: Optional[str], data: bytes) -> str:
-    if provided and "/" in provided:
-        return provided
+    normalized_provided = str(provided or "").split(";", 1)[0].strip().lower()
+    if (
+        normalized_provided
+        and "/" in normalized_provided
+        and normalized_provided != "application/octet-stream"
+        and not normalized_provided.endswith("/*")
+    ):
+        return normalized_provided
     guessed, _ = mimetypes.guess_type(filename)
     if guessed:
         return guessed
@@ -1871,6 +1879,7 @@ class AppHandler(BaseHTTPRequestHandler):
                     image_size=image_size,
                     enable_search=enable_search,
                     base_image_name=base_upload["filename"],
+                    base_image_sha256=base_upload.get("sha256", ""),
                     reference_count=len(ref_uploads),
                     api_platform_id=image_platform["platform_id"],
                     api_platform_name=image_platform["platform_name"],
@@ -1907,6 +1916,7 @@ class AppHandler(BaseHTTPRequestHandler):
             "imageSize": image_size,
             "enableSearch": enable_search,
             "baseImageName": base_upload["filename"],
+            "baseImageSha256": base_upload.get("sha256", ""),
             "referenceCount": len(ref_uploads),
             "apiPlatformId": image_platform["platform_id"],
             "apiPlatformName": image_platform["platform_name"],
@@ -2299,6 +2309,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 "mime_type": mime_type,
                 "data": raw,
                 "base64": base64.b64encode(raw).decode("utf-8"),
+                "sha256": hashlib.sha256(raw).hexdigest(),
             }
         value = field.value
         return value if value != "" else None

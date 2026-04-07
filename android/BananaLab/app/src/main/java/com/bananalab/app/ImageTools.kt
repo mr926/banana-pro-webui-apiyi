@@ -11,12 +11,14 @@ import androidx.compose.ui.graphics.asImageBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
 
 private const val MB = 1024 * 1024
 private const val BASE_MAX_BYTES = 4 * MB
 private const val BASE_MAX_EDGE = 4000
 private const val BASE_JPEG_QUALITY = 85
 private const val REFERENCE_MAX_BYTES = 2 * MB
+private val UPSTREAM_SAFE_MIME_TYPES = setOf("image/jpeg", "image/png", "image/webp")
 
 suspend fun createSelectedImage(
     context: Context,
@@ -26,7 +28,7 @@ suspend fun createSelectedImage(
     val resolver = context.contentResolver
     val rawBytes = resolver.readBytes(uri)
     val displayName = resolver.displayName(uri) ?: "image.jpg"
-    val mimeType = resolver.getType(uri) ?: guessMimeType(displayName, rawBytes)
+    val mimeType = normalizeSourceMimeType(resolver.getType(uri), displayName, rawBytes)
     val decoded = decodeBitmap(rawBytes) ?: error("无法读取图片：$displayName")
 
     val processed = if (isBaseImage) {
@@ -39,6 +41,7 @@ suspend fun createSelectedImage(
         name = processed.name,
         mimeType = processed.mimeType,
         bytes = processed.bytes,
+        sha256 = sha256Hex(processed.bytes),
         bitmapWidth = processed.width,
         bitmapHeight = processed.height,
         compressed = processed.compressed,
@@ -62,6 +65,7 @@ suspend fun createSelectedImageFromBytes(
         name = processed.name,
         mimeType = processed.mimeType,
         bytes = processed.bytes,
+        sha256 = sha256Hex(processed.bytes),
         bitmapWidth = processed.width,
         bitmapHeight = processed.height,
         compressed = processed.compressed,
@@ -86,7 +90,7 @@ private fun compressBaseIfNeeded(
     originalBytes: ByteArray,
     originalSize: Int,
 ): ProcessedImage {
-    if (originalSize <= BASE_MAX_BYTES) {
+    if (originalSize <= BASE_MAX_BYTES && mimeType in UPSTREAM_SAFE_MIME_TYPES) {
         return ProcessedImage(
             name = displayName,
             mimeType = mimeType.takeIf { it.startsWith("image/") } ?: "image/jpeg",
@@ -119,7 +123,7 @@ private fun compressReferenceIfNeeded(
     originalBytes: ByteArray,
     originalSize: Int,
 ): ProcessedImage {
-    if (originalSize <= REFERENCE_MAX_BYTES) {
+    if (originalSize <= REFERENCE_MAX_BYTES && mimeType in UPSTREAM_SAFE_MIME_TYPES) {
         return ProcessedImage(
             name = displayName,
             mimeType = mimeType.takeIf { it.startsWith("image/") } ?: "image/jpeg",
@@ -177,6 +181,25 @@ private fun ensureJpgName(name: String): String {
     return "$stem.jpg"
 }
 
+private fun normalizeSourceMimeType(
+    providedMimeType: String?,
+    name: String,
+    bytes: ByteArray,
+): String {
+    val normalizedProvided = providedMimeType
+        ?.substringBefore(';')
+        ?.trim()
+        ?.lowercase()
+        .orEmpty()
+    return when {
+        normalizedProvided.isBlank() -> guessMimeType(name, bytes)
+        normalizedProvided == "application/octet-stream" -> guessMimeType(name, bytes)
+        !normalizedProvided.startsWith("image/") -> guessMimeType(name, bytes)
+        normalizedProvided.endsWith("/*") -> guessMimeType(name, bytes)
+        else -> normalizedProvided
+    }
+}
+
 private fun guessMimeType(name: String, bytes: ByteArray): String {
     val lower = name.lowercase()
     return when {
@@ -197,6 +220,11 @@ private fun ByteArray.startsWith(prefix: ByteArray): Boolean {
         if (this[index] != prefix[index]) return false
     }
     return true
+}
+
+private fun sha256Hex(bytes: ByteArray): String {
+    val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+    return digest.joinToString(separator = "") { byte -> "%02x".format(byte) }
 }
 
 private fun ContentResolver.readBytes(uri: Uri): ByteArray {

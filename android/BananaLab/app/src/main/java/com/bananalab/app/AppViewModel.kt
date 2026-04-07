@@ -814,7 +814,12 @@ class BananaLabViewModel(application: Application) : AndroidViewModel(applicatio
         if (relaxed != null) return relaxed
 
         val newest = items.firstOrNull() ?: return null
-        if (previousTopHistoryId != null && newest.id != previousTopHistoryId && newest.matchesGenerationSettings(request)) {
+        if (
+            previousTopHistoryId != null &&
+            newest.id != previousTopHistoryId &&
+            newest.matchesGenerationSettings(request) &&
+            newest.matchesBaseImage(request)
+        ) {
             return newest
         }
         return null
@@ -1251,11 +1256,11 @@ class BananaLabViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun HistoryEntry.matchesGenerationRequestStrict(request: GenerationRequest): Boolean {
         if (!matchesGenerationRequest(request)) return false
-        return baseImageName.normalizedFileName() == request.baseImage.name.normalizedFileName()
+        return matchesBaseImage(request)
     }
 
     private fun HistoryEntry.matchesGenerationRequestRelaxed(request: GenerationRequest): Boolean {
-        return matchesGenerationRequest(request)
+        return matchesGenerationSettings(request) && matchesBaseImage(request)
     }
 
     private fun HistoryEntry.matchesGenerationSettings(request: GenerationRequest): Boolean {
@@ -1273,6 +1278,15 @@ class BananaLabViewModel(application: Application) : AndroidViewModel(applicatio
             referenceCountMatches &&
             platformMatches &&
             imageModelMatches
+    }
+
+    private fun HistoryEntry.matchesBaseImage(request: GenerationRequest): Boolean {
+        val requestHash = request.baseImage.sha256.trim()
+        val entryHash = baseImageSha256.trim()
+        if (requestHash.isNotBlank() && entryHash.isNotBlank()) {
+            return requestHash.equals(entryHash, ignoreCase = true)
+        }
+        return baseImageName.normalizedFileName() == request.baseImage.name.normalizedFileName()
     }
 
     private fun applyApiPlatformSelection(

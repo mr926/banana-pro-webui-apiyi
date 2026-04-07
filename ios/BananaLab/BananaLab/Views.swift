@@ -2,6 +2,27 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
+private enum AppUI {
+    enum Spacing {
+        static let x1: CGFloat = 8
+        static let x2: CGFloat = 16
+        static let x3: CGFloat = 24
+    }
+
+    enum Radius {
+        static let sm: CGFloat = 12
+        static let md: CGFloat = 16
+        static let lg: CGFloat = 20
+    }
+
+    enum Typography {
+        static let title = Font.system(size: 30, weight: .semibold, design: .rounded)
+        static let sectionTitle = Font.system(size: 20, weight: .semibold, design: .rounded)
+        static let body = Font.system(size: 15, weight: .regular, design: .rounded)
+        static let meta = Font.system(size: 12, weight: .medium, design: .rounded)
+    }
+}
+
 struct RootView: View {
     @EnvironmentObject private var model: BananaLabViewModel
 
@@ -13,9 +34,9 @@ struct RootView: View {
         .safeAreaInset(edge: .top, spacing: 0) {
             if let banner = model.banner {
                 BannerView(message: banner)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-                    .padding(.bottom, 4)
+                    .padding(.horizontal, AppUI.Spacing.x2)
+                    .padding(.top, AppUI.Spacing.x1)
+                    .padding(.bottom, AppUI.Spacing.x1)
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .task(id: banner.id) {
                         try? await Task.sleep(nanoseconds: 2_600_000_000)
@@ -40,10 +61,10 @@ struct RootView: View {
         LinearGradient(
             colors: [
                 Color(uiColor: .systemGroupedBackground),
-                Color(uiColor: .secondarySystemGroupedBackground),
+                Color(uiColor: .systemBackground).opacity(0.92),
             ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
+            startPoint: .top,
+            endPoint: .bottom
         )
         .ignoresSafeArea()
     }
@@ -63,20 +84,20 @@ struct RootView: View {
 
 struct BootstrapView: View {
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: AppUI.Spacing.x2) {
             Spacer()
             Image(systemName: "sparkles")
                 .font(.system(size: 44, weight: .semibold))
                 .foregroundStyle(.secondary)
             Text("BananaLab")
-                .font(.largeTitle.weight(.semibold))
+                .font(AppUI.Typography.title)
             ProgressView()
             Text("正在连接服务器")
-                .font(.callout)
+                .font(AppUI.Typography.body)
                 .foregroundStyle(.secondary)
             Spacer()
         }
-        .padding()
+        .padding(AppUI.Spacing.x3)
     }
 }
 
@@ -87,11 +108,11 @@ struct LoginView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x3) {
                 header
                 section
             }
-            .padding(20)
+            .padding(AppUI.Spacing.x3)
             .frame(maxWidth: 680)
             .frame(maxWidth: .infinity, alignment: .center)
         }
@@ -102,24 +123,24 @@ struct LoginView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: AppUI.Spacing.x1) {
             Text("BananaLab")
-                .font(.largeTitle.weight(.semibold))
+                .font(AppUI.Typography.title)
             Text("连接到你的图生图服务器")
-                .font(.callout)
+                .font(AppUI.Typography.body)
                 .foregroundStyle(.secondary)
         }
     }
 
     private var section: some View {
         SectionCard {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
                 Label("服务器设置", systemImage: "server.rack")
-                    .font(.headline)
+                    .font(AppUI.Typography.sectionTitle)
                 TextField("服务器地址", text: $editingServerURL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(CardInputFieldStyle())
 
                 Button {
                     Task { await model.updateServerURLAndReconnect(editingServerURL) }
@@ -131,11 +152,11 @@ struct LoginView: View {
                 Divider()
 
                 if model.authStatus.passwordEnabled {
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
                         Text("登录密码")
-                            .font(.headline)
+                            .font(AppUI.Typography.sectionTitle)
                         SecureField("输入服务器密码", text: $model.loginPassword)
-                            .textFieldStyle(.roundedBorder)
+                            .textFieldStyle(CardInputFieldStyle())
                             .focused($loginFocused)
                         Button {
                             Task { await model.login() }
@@ -151,7 +172,7 @@ struct LoginView: View {
                         .disabled(model.loginInProgress)
                     }
                 } else {
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: AppUI.Spacing.x1) {
                         Text("当前服务器未启用密码。")
                             .foregroundStyle(.secondary)
                         Button {
@@ -164,7 +185,7 @@ struct LoginView: View {
                     }
                 }
             }
-            .padding(18)
+            .padding(AppUI.Spacing.x3)
         }
     }
 }
@@ -230,6 +251,9 @@ struct AdaptiveShellView: View {
                 .tag(tab)
             }
         }
+        .toolbarBackground(.visible, for: .tabBar)
+        .toolbarBackground(Color(uiColor: .systemBackground), for: .tabBar)
+        .tint(Color.accentColor)
     }
 
     @ViewBuilder
@@ -256,14 +280,14 @@ struct GenerateView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
                 promptSection
                 referenceSection
                 baseImageSection
                 ratioSizeSection
                 resultSection
             }
-            .padding(16)
+            .padding(AppUI.Spacing.x2)
             .frame(maxWidth: 900, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .center)
         }
@@ -282,14 +306,14 @@ struct GenerateView: View {
 
     private var promptSection: some View {
         SectionCard {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
                 HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: AppUI.Spacing.x1) {
                         Text("Base Prompt")
-                            .font(.caption.weight(.semibold))
+                            .font(AppUI.Typography.meta)
                             .foregroundStyle(.secondary)
                         Text("提示词")
-                            .font(.headline)
+                            .font(AppUI.Typography.sectionTitle)
                     }
                     Spacer()
                     Picker("模式", selection: $model.promptMode) {
@@ -302,12 +326,12 @@ struct GenerateView: View {
                 }
 
                 TextEditor(text: $model.promptText)
-                    .font(.callout)
+                    .font(AppUI.Typography.body)
                     .frame(minHeight: 150)
-                    .padding(8)
-                    .background(Color(uiColor: .tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .padding(AppUI.Spacing.x1)
+                    .background(Color(uiColor: .tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: AppUI.Radius.sm, style: .continuous))
 
-                HStack(spacing: 10) {
+                HStack(spacing: AppUI.Spacing.x1) {
                     Menu {
                         Button("插入当前结果提示词") {
                             if let prompt = model.currentResult?.prompt {
@@ -345,36 +369,36 @@ struct GenerateView: View {
                 }
 
                 if !model.optimizedPrompt.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: AppUI.Spacing.x1) {
                         Text("优化结果")
-                            .font(.caption.weight(.semibold))
+                            .font(AppUI.Typography.meta)
                             .foregroundStyle(.secondary)
                         Text(model.optimizedPrompt)
-                            .font(.footnote)
+                            .font(AppUI.Typography.body)
                             .foregroundStyle(.secondary)
-                            .padding(10)
-                            .background(Color(uiColor: .tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .padding(AppUI.Spacing.x2)
+                            .background(Color(uiColor: .tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: AppUI.Radius.sm, style: .continuous))
                     }
                 }
             }
-            .padding(18)
+            .padding(AppUI.Spacing.x3)
         }
     }
 
     private var referenceSection: some View {
         SectionCard {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
                 HStack {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: AppUI.Spacing.x1) {
                         Text("Style Reference Images")
-                            .font(.caption.weight(.semibold))
+                            .font(AppUI.Typography.meta)
                             .foregroundStyle(.secondary)
                         Text("风格参考图")
-                            .font(.headline)
+                            .font(AppUI.Typography.sectionTitle)
                     }
                     Spacer()
                     Text("\(model.referenceImages.count) / 6")
-                        .font(.caption)
+                        .font(AppUI.Typography.meta)
                         .foregroundStyle(.secondary)
                 }
 
@@ -387,16 +411,16 @@ struct GenerateView: View {
                     EmptySectionHint(text: "选择最多 6 张风格参考图。")
                 } else {
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
+                        HStack(spacing: AppUI.Spacing.x2) {
                             ForEach(model.referenceImages) { item in
-                                VStack(alignment: .leading, spacing: 8) {
+                                VStack(alignment: .leading, spacing: AppUI.Spacing.x1) {
                                     ZStack(alignment: .topTrailing) {
                                         Image(uiImage: item.previewImage)
                                             .resizable()
                                             .scaledToFill()
                                             .frame(width: 110, height: 110)
                                             .clipped()
-                                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                            .clipShape(RoundedRectangle(cornerRadius: AppUI.Radius.md, style: .continuous))
                                         Button {
                                             model.removeReferenceImage(id: item.id)
                                         } label: {
@@ -408,7 +432,7 @@ struct GenerateView: View {
                                         .padding(6)
                                     }
                                     Text(item.filename)
-                                        .font(.caption2)
+                                        .font(AppUI.Typography.meta)
                                         .lineLimit(1)
                                         .frame(width: 110, alignment: .leading)
                                 }
@@ -417,20 +441,20 @@ struct GenerateView: View {
                     }
                 }
             }
-            .padding(18)
+            .padding(AppUI.Spacing.x3)
         }
     }
 
     private var baseImageSection: some View {
         SectionCard {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
                 HStack {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: AppUI.Spacing.x1) {
                         Text("Base Image")
-                            .font(.caption.weight(.semibold))
+                            .font(AppUI.Typography.meta)
                             .foregroundStyle(.secondary)
                         Text("基础图")
-                            .font(.headline)
+                            .font(AppUI.Typography.sectionTitle)
                     }
                     Spacer()
                     if model.baseImage != nil {
@@ -445,22 +469,22 @@ struct GenerateView: View {
                 .buttonStyle(SecondaryButtonStyle())
 
                 if let baseImage = model.baseImage {
-                    HStack(alignment: .top, spacing: 14) {
+                    HStack(alignment: .top, spacing: AppUI.Spacing.x2) {
                         Image(uiImage: baseImage.previewImage)
                             .resizable()
                             .scaledToFill()
                             .frame(width: 132, height: 132)
                             .clipped()
-                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: AppUI.Radius.md, style: .continuous))
 
                         VStack(alignment: .leading, spacing: 8) {
                             Text(baseImage.filename)
-                                .font(.subheadline.weight(.semibold))
+                                .font(AppUI.Typography.body.weight(.semibold))
                             Text(baseImage.readableSize)
-                                .font(.caption)
+                                .font(AppUI.Typography.meta)
                                 .foregroundStyle(.secondary)
                             Text(baseImage.compressed ? "已自动压缩" : "原图")
-                                .font(.caption)
+                                .font(AppUI.Typography.meta)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -468,19 +492,19 @@ struct GenerateView: View {
                     EmptySectionHint(text: "上传主结构图，其他图片会围绕它进行生成。")
                 }
             }
-            .padding(18)
+            .padding(AppUI.Spacing.x3)
         }
     }
 
     private var ratioSizeSection: some View {
         SectionCard {
-            VStack(alignment: .leading, spacing: 14) {
-                VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
+                VStack(alignment: .leading, spacing: AppUI.Spacing.x1) {
                     Text("Image Ratio & Size")
-                        .font(.caption.weight(.semibold))
+                        .font(AppUI.Typography.meta)
                         .foregroundStyle(.secondary)
                     Text("比例与尺寸")
-                        .font(.headline)
+                        .font(AppUI.Typography.sectionTitle)
                 }
 
                 Picker("比例", selection: $model.aspectRatio) {
@@ -499,9 +523,9 @@ struct GenerateView: View {
                 .pickerStyle(.segmented)
 
                 Toggle("开启搜索增强", isOn: $model.enableSearch)
-                    .font(.subheadline)
+                    .font(AppUI.Typography.body)
             }
-            .padding(18)
+            .padding(AppUI.Spacing.x3)
         }
     }
 
@@ -509,40 +533,39 @@ struct GenerateView: View {
         Group {
             if let result = model.currentResult {
                 SectionCard {
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
                         HStack {
-                            VStack(alignment: .leading, spacing: 4) {
+                            VStack(alignment: .leading, spacing: AppUI.Spacing.x1) {
                                 Text("Current Result")
-                                    .font(.caption.weight(.semibold))
+                                    .font(AppUI.Typography.meta)
                                     .foregroundStyle(.secondary)
                                 Text("当前结果")
-                                    .font(.headline)
+                                    .font(AppUI.Typography.sectionTitle)
                             }
                             Spacer()
                             Text(result.createdAt)
-                                .font(.caption2)
+                                .font(AppUI.Typography.meta)
                                 .foregroundStyle(.secondary)
                         }
 
                         CachedRemoteImageView(url: result.preferredImageURL)
                             .frame(maxWidth: .infinity)
                             .frame(height: 320)
-                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: AppUI.Radius.lg, style: .continuous))
 
                         Text(result.message ?? "生成成功")
-                            .font(.subheadline)
+                            .font(AppUI.Typography.body)
                             .foregroundStyle(.secondary)
                     }
-                    .padding(18)
+                    .padding(AppUI.Spacing.x3)
                 }
             }
         }
     }
 
     private var generateBar: some View {
-        VStack(spacing: 10) {
-            Divider()
-            HStack(spacing: 12) {
+        VStack(spacing: AppUI.Spacing.x1) {
+            HStack(spacing: AppUI.Spacing.x1) {
                 if model.generationRetryAvailable {
                     Button {
                         Task { await model.retryLastGeneration() }
@@ -566,10 +589,15 @@ struct GenerateView: View {
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(model.generationInProgress || model.baseImage == nil)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 12)
+            .padding(.horizontal, AppUI.Spacing.x2)
+            .padding(.vertical, AppUI.Spacing.x2)
         }
-        .background(.ultraThinMaterial)
+        .background(Color(uiColor: .systemBackground).opacity(0.96))
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.black.opacity(0.06))
+                .frame(height: 0.5)
+        }
     }
 }
 
@@ -578,11 +606,11 @@ struct HistoryView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
                 header
                 content
             }
-            .padding(16)
+            .padding(AppUI.Spacing.x2)
             .frame(maxWidth: 1100, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .center)
         }
@@ -593,17 +621,17 @@ struct HistoryView: View {
 
     private var header: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x1) {
                 Text("History Album")
-                    .font(.caption.weight(.semibold))
+                    .font(AppUI.Typography.meta)
                     .foregroundStyle(.secondary)
                 Text("历史相册")
-                    .font(.largeTitle.weight(.semibold))
+                    .font(AppUI.Typography.title)
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 8) {
+            VStack(alignment: .trailing, spacing: AppUI.Spacing.x1) {
                 Text("\(model.historySelection.count) / \(model.history.count)")
-                    .font(.caption)
+                    .font(AppUI.Typography.meta)
                     .foregroundStyle(.secondary)
                 HStack(spacing: 8) {
                     Button("批量下载") {
@@ -629,7 +657,7 @@ struct HistoryView: View {
                     .padding(24)
             }
         } else {
-            LazyVGrid(columns: gridColumns, spacing: 14) {
+            LazyVGrid(columns: gridColumns, spacing: AppUI.Spacing.x2) {
                 ForEach(model.history) { entry in
                     HistoryCard(entry: entry)
                 }
@@ -638,7 +666,7 @@ struct HistoryView: View {
     }
 
     private var gridColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 240, maximum: 360), spacing: 14)]
+        [GridItem(.adaptive(minimum: 240, maximum: 360), spacing: AppUI.Spacing.x2)]
     }
 }
 
@@ -648,11 +676,11 @@ struct HistoryCard: View {
 
     var body: some View {
         SectionCard {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
                 ZStack(alignment: .topTrailing) {
                     CachedRemoteImageView(url: entry.preferredThumbURL)
                         .frame(height: 220)
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: AppUI.Radius.md, style: .continuous))
 
                     Button {
                         model.toggleHistorySelection(entry.id)
@@ -660,16 +688,16 @@ struct HistoryCard: View {
                         Image(systemName: model.historySelection.contains(entry.id) ? "checkmark.circle.fill" : "circle")
                             .font(.title3)
                             .symbolRenderingMode(.hierarchical)
-                            .padding(10)
+                            .padding(AppUI.Spacing.x1)
                     }
                 }
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: AppUI.Spacing.x1) {
                     Text(entry.createdAt)
-                        .font(.caption)
+                        .font(AppUI.Typography.meta)
                         .foregroundStyle(.secondary)
                     Text(entry.prompt)
-                        .font(.subheadline)
+                        .font(AppUI.Typography.body)
                         .lineLimit(3)
                         .foregroundStyle(.primary)
                 }
@@ -706,7 +734,7 @@ struct HistoryCard: View {
                     .buttonStyle(SecondaryButtonStyle())
                 }
             }
-            .padding(16)
+            .padding(AppUI.Spacing.x2)
         }
     }
 }
@@ -716,11 +744,11 @@ struct PromptLibraryView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
                 header
                 editor
             }
-            .padding(16)
+            .padding(AppUI.Spacing.x2)
             .frame(maxWidth: 920, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .center)
         }
@@ -728,12 +756,12 @@ struct PromptLibraryView: View {
 
     private var header: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x1) {
                 Text("Prompt Library")
-                    .font(.caption.weight(.semibold))
+                    .font(AppUI.Typography.meta)
                     .foregroundStyle(.secondary)
                 Text("提示词列表")
-                    .font(.largeTitle.weight(.semibold))
+                    .font(AppUI.Typography.title)
             }
             Spacer()
             Button("保存") {
@@ -745,12 +773,12 @@ struct PromptLibraryView: View {
 
     private var editor: some View {
         SectionCard {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
                 TextEditor(text: $model.promptLibraryDraft)
-                    .font(.callout)
+                    .font(AppUI.Typography.body)
                     .frame(minHeight: 220)
-                    .padding(8)
-                    .background(Color(uiColor: .tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .padding(AppUI.Spacing.x1)
+                    .background(Color(uiColor: .tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: AppUI.Radius.sm, style: .continuous))
 
                 if !model.promptLibrary.items.isEmpty {
                     FlowLayout(spacing: 8) {
@@ -764,7 +792,7 @@ struct PromptLibraryView: View {
                     }
                 }
             }
-            .padding(18)
+            .padding(AppUI.Spacing.x3)
         }
     }
 }
@@ -774,12 +802,12 @@ struct PersonasView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
                 header
                 selector
                 list
             }
-            .padding(16)
+            .padding(AppUI.Spacing.x2)
             .frame(maxWidth: 960, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .center)
         }
@@ -787,12 +815,12 @@ struct PersonasView: View {
 
     private var header: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x1) {
                 Text("Prompt Personas")
-                    .font(.caption.weight(.semibold))
+                    .font(AppUI.Typography.meta)
                     .foregroundStyle(.secondary)
                 Text("优化人设")
-                    .font(.largeTitle.weight(.semibold))
+                    .font(AppUI.Typography.title)
             }
             Spacer()
             Button("新建") { model.startNewPersona() }
@@ -802,9 +830,9 @@ struct PersonasView: View {
 
     private var selector: some View {
         SectionCard {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x1) {
                 Text("当前生成人设")
-                    .font(.headline)
+                    .font(AppUI.Typography.sectionTitle)
                 Picker("人设", selection: $model.selectedPersonaID) {
                     Text("默认").tag("")
                     ForEach(model.personas) { persona in
@@ -813,7 +841,7 @@ struct PersonasView: View {
                 }
                 .pickerStyle(.menu)
             }
-            .padding(18)
+            .padding(AppUI.Spacing.x3)
         }
     }
 
@@ -826,16 +854,16 @@ struct PersonasView: View {
                         .padding(24)
                 }
             } else {
-                LazyVStack(spacing: 12) {
+                LazyVStack(spacing: AppUI.Spacing.x2) {
                     ForEach(model.personas) { persona in
                         SectionCard {
-                            VStack(alignment: .leading, spacing: 12) {
+                            VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
                                 HStack(alignment: .top) {
-                                    VStack(alignment: .leading, spacing: 4) {
+                                    VStack(alignment: .leading, spacing: AppUI.Spacing.x1) {
                                         Text(persona.name)
-                                            .font(.headline)
+                                            .font(AppUI.Typography.sectionTitle)
                                         Text(persona.summary)
-                                            .font(.subheadline)
+                                            .font(AppUI.Typography.body)
                                             .foregroundStyle(.secondary)
                                     }
                                     Spacer()
@@ -844,7 +872,7 @@ struct PersonasView: View {
                                     }
                                 }
                                 Text(persona.filename)
-                                    .font(.caption)
+                                    .font(AppUI.Typography.meta)
                                     .foregroundStyle(.secondary)
 
                                 HStack(spacing: 8) {
@@ -859,7 +887,7 @@ struct PersonasView: View {
                                     .buttonStyle(SecondaryButtonStyle())
                                 }
                             }
-                            .padding(16)
+                            .padding(AppUI.Spacing.x2)
                         }
                     }
                 }
@@ -874,13 +902,13 @@ struct SettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
                 header
                 serverSection
                 sessionSection
                 aboutSection
             }
-            .padding(16)
+            .padding(AppUI.Spacing.x2)
             .frame(maxWidth: 820, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .center)
         }
@@ -890,24 +918,24 @@ struct SettingsView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: AppUI.Spacing.x1) {
             Text("Settings")
-                .font(.caption.weight(.semibold))
+                .font(AppUI.Typography.meta)
                 .foregroundStyle(.secondary)
             Text("设置")
-                .font(.largeTitle.weight(.semibold))
+                .font(AppUI.Typography.title)
         }
     }
 
     private var serverSection: some View {
         SectionCard {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
                 Text("服务器地址")
-                    .font(.headline)
+                    .font(AppUI.Typography.sectionTitle)
                 TextField("http://127.0.0.1:8787", text: $localServerURL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(CardInputFieldStyle())
                 HStack(spacing: 8) {
                     Button("保存并重连") {
                         Task { await model.updateServerURLAndReconnect(localServerURL) }
@@ -920,24 +948,24 @@ struct SettingsView: View {
                     .buttonStyle(SecondaryButtonStyle())
                 }
             }
-            .padding(18)
+            .padding(AppUI.Spacing.x3)
         }
     }
 
     private var sessionSection: some View {
         SectionCard {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
                 Text("登录状态")
-                    .font(.headline)
+                    .font(AppUI.Typography.sectionTitle)
                 Text(model.authStatus.authenticated ? "已登录" : "未登录")
                     .foregroundStyle(.secondary)
                 if model.authStatus.passwordEnabled {
                     Text("服务器启用了密码，登录状态会安全保存 24 小时。")
-                        .font(.footnote)
+                        .font(AppUI.Typography.body)
                         .foregroundStyle(.secondary)
                 } else {
                     Text("当前服务器未启用密码。")
-                        .font(.footnote)
+                        .font(AppUI.Typography.body)
                         .foregroundStyle(.secondary)
                 }
                 Button("退出登录") {
@@ -945,22 +973,22 @@ struct SettingsView: View {
                 }
                 .buttonStyle(SecondaryButtonStyle())
             }
-            .padding(18)
+            .padding(AppUI.Spacing.x3)
         }
     }
 
     private var aboutSection: some View {
         SectionCard {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x1) {
                 Text("BananaLab")
-                    .font(.headline)
+                    .font(AppUI.Typography.sectionTitle)
                 Text("iOS 原生客户端，支持 iPhone 和 iPad。")
                     .foregroundStyle(.secondary)
                 Text("Version \(Bundle.main.appVersion)")
-                    .font(.footnote)
+                    .font(AppUI.Typography.meta)
                     .foregroundStyle(.secondary)
             }
-            .padding(18)
+            .padding(AppUI.Spacing.x3)
         }
     }
 }
@@ -971,25 +999,50 @@ struct PersonaEditorSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("基本信息") {
-                    TextField("名称", text: $model.personaDraft.name)
-                    TextField("简介", text: $model.personaDraft.summary, axis: .vertical)
-                        .lineLimit(2...3)
-                }
+            ScrollView {
+                VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
+                    SectionCard {
+                        VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
+                            Text("基本信息")
+                                .font(AppUI.Typography.sectionTitle)
+                            TextField("名称", text: $model.personaDraft.name)
+                                .textFieldStyle(CardInputFieldStyle())
+                            TextField("简介", text: $model.personaDraft.summary, axis: .vertical)
+                                .lineLimit(2...3)
+                                .textFieldStyle(CardInputFieldStyle())
+                        }
+                        .padding(AppUI.Spacing.x3)
+                    }
 
-                Section("正文") {
-                    TextEditor(text: $model.personaDraft.content)
-                        .frame(minHeight: 240)
-                }
+                    SectionCard {
+                        VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
+                            Text("正文")
+                                .font(AppUI.Typography.sectionTitle)
+                            TextEditor(text: $model.personaDraft.content)
+                                .font(AppUI.Typography.body)
+                                .frame(minHeight: 240)
+                                .padding(AppUI.Spacing.x1)
+                                .background(Color(uiColor: .tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: AppUI.Radius.sm, style: .continuous))
+                        }
+                        .padding(AppUI.Spacing.x3)
+                    }
 
-                Section("文件名") {
-                    TextField("persona.md", text: $model.personaDraft.filename)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                    SectionCard {
+                        VStack(alignment: .leading, spacing: AppUI.Spacing.x2) {
+                            Text("文件名")
+                                .font(AppUI.Typography.sectionTitle)
+                            TextField("persona.md", text: $model.personaDraft.filename)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .textFieldStyle(CardInputFieldStyle())
+                        }
+                        .padding(AppUI.Spacing.x3)
+                    }
                 }
+                .padding(AppUI.Spacing.x2)
             }
             .navigationTitle(model.personaDraft.isNew ? "新建人设" : "编辑人设")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") {
@@ -1014,28 +1067,28 @@ struct BannerView: View {
     let message: BannerMessage
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: AppUI.Spacing.x2) {
             Image(systemName: symbolName)
                 .font(.headline)
                 .foregroundStyle(foregroundColor)
                 .padding(.top, 1)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: AppUI.Spacing.x1) {
                 Text(message.title)
-                    .font(.subheadline.weight(.semibold))
+                    .font(AppUI.Typography.body.weight(.semibold))
                 Text(message.message)
-                    .font(.footnote)
+                    .font(AppUI.Typography.body)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
 
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 12)
-        .padding(.horizontal, 14)
-        .background(backgroundColor, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(.vertical, AppUI.Spacing.x2)
+        .padding(.horizontal, AppUI.Spacing.x2)
+        .background(backgroundColor, in: RoundedRectangle(cornerRadius: AppUI.Radius.md, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: AppUI.Radius.md, style: .continuous)
                 .strokeBorder(borderColor, lineWidth: 1)
         }
     }
@@ -1082,12 +1135,8 @@ struct SectionCard<Content: View>: View {
 
     var body: some View {
         content
-            .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .strokeBorder(Color.black.opacity(0.06), lineWidth: 1)
-            }
-            .shadow(color: .black.opacity(0.03), radius: 10, y: 3)
+            .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: AppUI.Radius.lg, style: .continuous))
+            .shadow(color: .black.opacity(0.04), radius: 16, y: 6)
     }
 }
 
@@ -1096,7 +1145,7 @@ struct EmptySectionHint: View {
 
     var body: some View {
         Text(text)
-            .font(.callout)
+            .font(AppUI.Typography.body)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -1118,7 +1167,7 @@ struct CachedRemoteImageView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color(uiColor: .secondarySystemGroupedBackground))
             } else {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                RoundedRectangle(cornerRadius: AppUI.Radius.md, style: .continuous)
                     .fill(Color(uiColor: .secondarySystemGroupedBackground))
                     .overlay {
                         Image(systemName: "photo")
@@ -1158,44 +1207,56 @@ struct Pill: View {
 
     var body: some View {
         Text(text)
-            .font(.caption2.weight(.semibold))
+            .font(AppUI.Typography.meta)
             .foregroundStyle(.secondary)
-            .padding(.vertical, 6)
-            .padding(.horizontal, 8)
-            .background(Color(uiColor: .tertiarySystemGroupedBackground), in: Capsule())
+            .padding(.vertical, AppUI.Spacing.x1)
+            .padding(.horizontal, AppUI.Spacing.x1)
+            .background(Color(uiColor: .tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: AppUI.Radius.sm, style: .continuous))
     }
 }
 
 struct TagButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.caption.weight(.semibold))
-            .padding(.vertical, 8)
-            .padding(.horizontal, 10)
-            .background(configuration.isPressed ? Color.black.opacity(0.08) : Color(uiColor: .tertiarySystemGroupedBackground), in: Capsule())
+            .font(AppUI.Typography.meta)
+            .padding(.vertical, AppUI.Spacing.x1)
+            .padding(.horizontal, AppUI.Spacing.x2)
+            .background(configuration.isPressed ? Color.black.opacity(0.06) : Color(uiColor: .tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: AppUI.Radius.sm, style: .continuous))
     }
 }
 
 struct SecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.subheadline.weight(.semibold))
-            .padding(.vertical, 10)
-            .padding(.horizontal, 14)
+            .font(AppUI.Typography.body.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.vertical, AppUI.Spacing.x1)
+            .padding(.horizontal, AppUI.Spacing.x2)
             .frame(minHeight: 44)
-            .background(configuration.isPressed ? Color.black.opacity(0.08) : Color(uiColor: .tertiarySystemGroupedBackground), in: Capsule())
+            .background(configuration.isPressed ? Color.black.opacity(0.06) : Color(uiColor: .tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: AppUI.Radius.sm, style: .continuous))
     }
 }
 
 struct PrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.subheadline.weight(.semibold))
+            .font(AppUI.Typography.body.weight(.semibold))
             .foregroundStyle(.white)
-            .padding(.vertical, 12)
-            .padding(.horizontal, 18)
+            .padding(.vertical, AppUI.Spacing.x2)
+            .padding(.horizontal, AppUI.Spacing.x3)
             .frame(minHeight: 44)
-            .background(configuration.isPressed ? Color.accentColor.opacity(0.82) : Color.accentColor, in: Capsule())
+            .background(configuration.isPressed ? Color.accentColor.opacity(0.82) : Color.accentColor, in: RoundedRectangle(cornerRadius: AppUI.Radius.md, style: .continuous))
+            .shadow(color: Color.accentColor.opacity(0.20), radius: 10, y: 5)
+    }
+}
+
+struct CardInputFieldStyle: TextFieldStyle {
+    func _body(configuration: TextField<Self._Label>) -> some View {
+        configuration
+            .font(AppUI.Typography.body)
+            .padding(.vertical, AppUI.Spacing.x1)
+            .padding(.horizontal, AppUI.Spacing.x2)
+            .background(Color(uiColor: .tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: AppUI.Radius.sm, style: .continuous))
     }
 }
 

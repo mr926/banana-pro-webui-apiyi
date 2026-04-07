@@ -408,6 +408,7 @@ class BananaLabApi(
             imageSize = optString("imageSize").orEmpty(),
             enableSearch = optBoolean("enableSearch", false),
             baseImageName = optString("baseImageName").orEmpty(),
+            baseImageSha256 = optString("baseImageSha256").orEmpty(),
             referenceCount = optInt("referenceCount", 0),
             imageUrl = optString("imageUrl").orEmpty(),
             thumbUrl = optString("thumbUrl").orEmpty(),
