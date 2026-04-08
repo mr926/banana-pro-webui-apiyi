@@ -147,13 +147,14 @@
                 rows="3"
                 placeholder="例如：保留建筑结构，生成清晨自然光的现代外立面效果图，浅灰石材与木饰面，氛围克制、真实。"
               ></textarea>
+              <p class="param-section-hint">上传后可点击图片左下角标签，把 `BASE` / `REF1` / `REF2` 插入到当前光标位置。</p>
 
               <!-- AI 优化面板（隐藏） -->
               <div id="optimized-prompt-panel" class="optimized-prompt-panel hidden">
                 <div class="persona-toolbar">
                   <div class="prompt-toolbar">
                     <select id="prompt-persona-select" class="prompt-select">
-                      <option value="">选择转译人设</option>
+                      <option value="">选择转译技能</option>
                     </select>
                     <button type="button" id="manage-prompt-persona-button" class="ghost-button">管理</button>
                   </div>
@@ -385,6 +386,7 @@
             </div>
             <div class="param-section-body">
               <textarea name="prompt-m" rows="4" id="prompt-m" placeholder="例如：保留建筑结构，生成清晨自然光的现代外立面效果图…"></textarea>
+              <p class="param-section-hint">可点图片左下角标签，把 `BASE` / `REF1` / `REF2` 插入到当前光标位置。</p>
             </div>
           </section>
 
@@ -535,11 +537,11 @@
       </div>
     </div>
 
-    <!-- ── 人设管理 Modal ── -->
+    <!-- ── 技能管理 Modal ── -->
     <div id="prompt-persona-modal" class="modal-overlay hidden" aria-hidden="true">
       <div class="modal-card modal-card-wide">
         <div class="modal-head">
-          <h2>管理提示词优化人格</h2>
+          <h2>管理提示词优化技能</h2>
           <button type="button" id="close-prompt-persona-modal" class="ghost-button">关闭</button>
         </div>
         <div class="modal-two-column">
@@ -554,12 +556,12 @@
               </label>
               <button type="button" id="upload-prompt-persona-button" class="ghost-button">上传</button>
             </div>
-            <p class="modal-intro compact">格式：第一行名称，第二行简介，其余为系统提示词。</p>
+            <p class="modal-intro compact">格式：第一行技能名称，第二行简介，其余为系统提示词。</p>
             <div id="prompt-persona-list" class="persona-list"></div>
           </section>
           <section class="modal-panel">
             <div class="modal-panel-head">
-              <h3>编辑当前人格</h3>
+              <h3>编辑当前技能</h3>
               <div class="persona-editor-tools">
                 <button type="button" id="create-prompt-persona-button" class="ghost-button">新建</button>
                 <span id="prompt-persona-filename" class="meta-pill">未选择</span>
@@ -571,7 +573,7 @@
             </label>
             <label class="modal-field">
               <span>名称</span>
-              <input id="prompt-persona-name-input" class="auth-input modal-input" type="text" placeholder="人格名称" />
+              <input id="prompt-persona-name-input" class="auth-input modal-input" type="text" placeholder="技能名称" />
             </label>
             <label class="modal-field">
               <span>简介</span>
@@ -583,7 +585,7 @@
             </label>
             <div class="modal-actions split">
               <button type="button" id="save-prompt-persona-button" class="primary-button modal-primary">保存修改</button>
-              <button type="button" id="delete-prompt-persona-button" class="danger-button">删除人格</button>
+              <button type="button" id="delete-prompt-persona-button" class="danger-button">删除技能</button>
             </div>
             <p id="prompt-persona-modal-status" class="form-status inline-status"></p>
           </section>

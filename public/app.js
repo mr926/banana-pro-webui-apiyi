@@ -96,6 +96,9 @@ const state = {
   optimizedPrompt: "",
   optimizingPrompt: false,
   titleFlashTimer: null,
+  promptCursorTarget: "",
+  promptCursorStart: 0,
+  promptCursorEnd: 0,
 };
 
 const progressSteps = [
@@ -826,7 +829,7 @@ function renderFiles(container, files, typeLabel, options = {}) {
     return;
   }
 
-  const { onRemove } = options;
+  const { onRemove, getReferenceToken, onInsertReference } = options;
   Array.from(files).forEach((file, index) => {
     const url = URL.createObjectURL(file);
     const card = document.createElement("div");
@@ -837,9 +840,31 @@ function renderFiles(container, files, typeLabel, options = {}) {
     img.alt = file.name;
     img.dataset.objectUrl = url;
 
-    const badge = document.createElement("span");
+    const badge = document.createElement("button");
+    const token = getReferenceToken?.(index, file) || `${typeLabel} ${index + 1}`;
     badge.className = "thumb-badge";
-    badge.textContent = `${typeLabel} ${index + 1}`;
+    badge.type = "button";
+    badge.title = `插入编号 ${token} 到提示词`;
+    badge.setAttribute("aria-label", `插入编号 ${token} 到提示词`);
+    badge.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+    });
+    badge.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onInsertReference?.(token, file, index);
+    });
+
+    const badgeToken = document.createElement("strong");
+    badgeToken.className = "thumb-badge-token";
+    badgeToken.textContent = token;
+
+    const badgeName = document.createElement("span");
+    badgeName.className = "thumb-badge-name";
+    badgeName.textContent = String(file?.name || "").trim() || token;
+
+    badge.appendChild(badgeToken);
+    badge.appendChild(badgeName);
 
     const removeButton = document.createElement("button");
     removeButton.type = "button";
@@ -863,6 +888,8 @@ function renderBasePreview() {
   const files = state.baseImageFile ? [state.baseImageFile] : [];
   basePreviewTargets.forEach((container) => {
     renderFiles(container, files, "基础图", {
+      getReferenceToken: (index) => getImageReferenceToken("base", index),
+      onInsertReference: (token) => insertTextIntoPromptAtCursor(token),
       onRemove: () => {
         state.baseImageFile = null;
         clearNativeInputFiles(baseInputs, { required: true });
@@ -876,6 +903,8 @@ function renderBasePreview() {
 function renderReferencePreview() {
   referencePreviewTargets.forEach((container) => {
     renderFiles(container, state.referenceFiles, "参考图", {
+      getReferenceToken: (index) => getImageReferenceToken("reference", index),
+      onInsertReference: (token) => insertTextIntoPromptAtCursor(token),
       onRemove: (index) => {
         state.referenceFiles.splice(index, 1);
         syncNativeInputFiles(referenceInputs, state.referenceFiles);
@@ -1054,6 +1083,76 @@ function setPromptPersonaModalStatus(message, isError = false) {
   promptPersonaModalStatus.style.color = isError ? "#d14343" : "";
 }
 
+function getPromptTargetKey(textarea) {
+  if (!textarea) return "";
+  return textarea === promptTextareaMobile ? "mobile" : "desktop";
+}
+
+function getPromptTextareaByKey(targetKey) {
+  if (targetKey === "mobile" && promptTextareaMobile) {
+    return promptTextareaMobile;
+  }
+  if (targetKey === "desktop" && promptTextarea) {
+    return promptTextarea;
+  }
+  const prefersMobile = window.matchMedia?.("(max-width: 767px)")?.matches;
+  if (prefersMobile && promptTextareaMobile) {
+    return promptTextareaMobile;
+  }
+  return promptTextarea || promptTextareaMobile || null;
+}
+
+function rememberPromptCursor(textarea) {
+  if (!textarea) return;
+  state.promptCursorTarget = getPromptTargetKey(textarea);
+  state.promptCursorStart = Number.isInteger(textarea.selectionStart) ? textarea.selectionStart : textarea.value.length;
+  state.promptCursorEnd = Number.isInteger(textarea.selectionEnd) ? textarea.selectionEnd : state.promptCursorStart;
+}
+
+function syncPromptTextareas(value) {
+  if (promptTextarea) {
+    promptTextarea.value = value;
+  }
+  if (promptTextareaMobile) {
+    promptTextareaMobile.value = value;
+  }
+}
+
+function insertTextIntoPromptAtCursor(text) {
+  if (!text) return;
+  const activeTextarea =
+    document.activeElement === promptTextarea || document.activeElement === promptTextareaMobile
+      ? document.activeElement
+      : null;
+  const targetTextarea = activeTextarea || getPromptTextareaByKey(state.promptCursorTarget);
+  if (!targetTextarea) return;
+
+  const value = targetTextarea.value || "";
+  const start = activeTextarea
+    ? (targetTextarea.selectionStart ?? value.length)
+    : Math.min(state.promptCursorStart ?? value.length, value.length);
+  const end = activeTextarea
+    ? (targetTextarea.selectionEnd ?? start)
+    : Math.min(state.promptCursorEnd ?? start, value.length);
+  const nextValue = `${value.slice(0, start)}${text}${value.slice(end)}`;
+  const nextCursor = start + text.length;
+
+  syncPromptTextareas(nextValue);
+  resetOptimizedPrompt();
+  syncSubmitButtonState();
+
+  const nextTarget = getPromptTextareaByKey(getPromptTargetKey(targetTextarea));
+  if (nextTarget) {
+    nextTarget.focus({ preventScroll: true });
+    nextTarget.setSelectionRange(nextCursor, nextCursor);
+    rememberPromptCursor(nextTarget);
+  }
+}
+
+function getImageReferenceToken(kind, index) {
+  return kind === "base" ? "BASE" : `REF${index + 1}`;
+}
+
 function setModalVisible(modal, visible) {
   if (!modal) return;
   modal.classList.toggle("hidden", !visible);
@@ -1064,7 +1163,7 @@ function normalizePersonaFilename(value) {
   const raw = String(value || "").trim().replace(/\\/g, "/").split("/").pop() || "";
   const withoutExt = raw.replace(/\.md$/i, "").trim();
   const safeStem = withoutExt.replace(/[^\w\u4e00-\u9fff-]+/g, "-").replace(/^-+|-+$/g, "");
-  const finalStem = safeStem || "persona";
+  const finalStem = safeStem || "skill";
   return `${finalStem}.md`;
 }
 
@@ -1073,7 +1172,7 @@ function syncPromptPersonaEditorState() {
     if (promptPersonaFilename) promptPersonaFilename.textContent = "新建中";
     if (savePromptPersonaButton) {
       savePromptPersonaButton.disabled = false;
-      savePromptPersonaButton.textContent = "创建人格";
+      savePromptPersonaButton.textContent = "创建技能";
     }
     if (deletePromptPersonaButton) deletePromptPersonaButton.disabled = true;
     return;
@@ -1104,14 +1203,14 @@ function prepareNewPromptPersona() {
   state.editingPromptPersonaFilename = "";
   if (promptPersonaFilenameInput && !promptPersonaFilenameInput.value.trim()) {
     const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    promptPersonaFilenameInput.value = `persona-${stamp}.md`;
+    promptPersonaFilenameInput.value = `skill-${stamp}.md`;
   }
   if (promptPersonaFilename) promptPersonaFilename.textContent = "新建中";
   if (promptPersonaNameInput && !promptPersonaNameInput.value.trim()) {
-    promptPersonaNameInput.value = "新建人格";
+    promptPersonaNameInput.value = "新建技能";
   }
   if (promptPersonaSummaryInput && !promptPersonaSummaryInput.value.trim()) {
-    promptPersonaSummaryInput.value = "请填写一句人格简介";
+    promptPersonaSummaryInput.value = "请填写一句技能简介";
   }
   if (promptPersonaContentInput && !promptPersonaContentInput.value.trim()) {
     promptPersonaContentInput.value = "你是一个擅长将中文图像需求转写为高质量英文提示词的助手。";
@@ -1126,7 +1225,7 @@ function renderPromptPersonaManagerList() {
   promptPersonaList.innerHTML = "";
 
   if (state.promptPersonas.length === 0) {
-    promptPersonaList.innerHTML = `<div class="empty-history">暂无人设</div>`;
+    promptPersonaList.innerHTML = `<div class="empty-history">暂无技能</div>`;
     return;
   }
 
@@ -1150,7 +1249,7 @@ function renderPromptPersonaManagerList() {
         await loadPromptPersonaDetail(persona.id);
         setPromptPersonaModalStatus("");
       } catch (error) {
-        const message = error instanceof Error ? error.message : "加载人设详情失败";
+        const message = error instanceof Error ? error.message : "加载技能详情失败";
         setPromptPersonaModalStatus(message, true);
       }
     });
@@ -1183,10 +1282,10 @@ function renderPromptPersonaOptions() {
 
   promptPersonaSelect.innerHTML = "";
   if (state.promptPersonas.length === 0) {
-    promptPersonaSelect.innerHTML = `<option value="">暂无可用人设</option>`;
+    promptPersonaSelect.innerHTML = `<option value="">暂无可用技能</option>`;
     promptPersonaSelect.disabled = true;
     if (promptPersonaSummary) {
-      promptPersonaSummary.textContent = "请先在 data/personas 文件夹中添加人设 .md 文件。";
+      promptPersonaSummary.textContent = "请先在 data/skills 文件夹中添加技能 .md 文件。旧版 data/personas 也会自动兼容。";
     }
     return;
   }
@@ -1214,7 +1313,7 @@ function renderPromptPersonaOptions() {
 
 async function loadPromptPersonas() {
   try {
-    const response = await fetch("/api/prompt-personas");
+    const response = await fetch("/api/prompt-skills");
     if (response.status === 401) {
       state.promptPersonas = [];
       state.selectedPromptPersonaId = "";
@@ -1249,10 +1348,10 @@ async function loadPromptPersonas() {
 }
 
 async function loadPromptPersonaDetail(personaId) {
-  const response = await fetch(`/api/prompt-personas/${encodeURIComponent(personaId)}`);
+  const response = await fetch(`/api/prompt-skills/${encodeURIComponent(personaId)}`);
   const payload = await readJsonSafely(response);
   if (!response.ok) {
-    throw new Error(payload.error || "加载人设详情失败");
+    throw new Error(payload.error || "加载技能详情失败");
   }
 
   state.creatingPromptPersona = false;
@@ -1291,7 +1390,7 @@ function openPromptPersonaModal() {
       try {
         await loadPromptPersonaDetail(state.selectedPromptPersonaId);
       } catch (error) {
-        const message = error instanceof Error ? error.message : "加载人设详情失败";
+        const message = error instanceof Error ? error.message : "加载技能详情失败";
         setPromptPersonaModalStatus(message, true);
       }
     } else {
@@ -1318,8 +1417,9 @@ function handleModalBackdropClick(event) {
 function appendPromptText(text) {
   if (!promptTextarea || !text) return;
   const current = promptTextarea.value.trim();
-  promptTextarea.value = current ? `${current}\n${text}` : text;
+  syncPromptTextareas(current ? `${current}\n${text}` : text);
   resetOptimizedPrompt();
+  syncSubmitButtonState();
 }
 
 function setApiPlatformHint(message, isError = false) {
@@ -2215,7 +2315,7 @@ async function uploadPromptPersonaFile() {
 
   const text = await file.text();
   const lines = text.split(/\r?\n/);
-  const response = await fetch("/api/prompt-personas", {
+  const response = await fetch("/api/prompt-skills", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -2227,7 +2327,7 @@ async function uploadPromptPersonaFile() {
   });
   const payload = await readJsonSafely(response);
   if (!response.ok) {
-    throw new Error(payload.error || "上传人设失败");
+    throw new Error(payload.error || "上传技能失败");
   }
 
   promptPersonaFileInput.value = "";
@@ -2241,7 +2341,7 @@ async function uploadPromptPersonaFile() {
 
 function collectPromptPersonaEditorPayload() {
   return {
-    filename: normalizePersonaFilename(promptPersonaFilenameInput?.value || state.editingPromptPersonaFilename || "persona.md"),
+    filename: normalizePersonaFilename(promptPersonaFilenameInput?.value || state.editingPromptPersonaFilename || "skill.md"),
     name: (promptPersonaNameInput?.value || "").trim(),
     summary: (promptPersonaSummaryInput?.value || "").trim(),
     content: (promptPersonaContentInput?.value || "").trim(),
@@ -2250,14 +2350,14 @@ function collectPromptPersonaEditorPayload() {
 
 async function createPromptPersonaFromEditor() {
   const payload = collectPromptPersonaEditorPayload();
-  const response = await fetch("/api/prompt-personas", {
+  const response = await fetch("/api/prompt-skills", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   const body = await readJsonSafely(response);
   if (!response.ok) {
-    throw new Error(body.error || "新建人设失败");
+    throw new Error(body.error || "新建技能失败");
   }
   return body;
 }
@@ -2274,14 +2374,14 @@ async function savePromptPersonaFromEditor() {
     return { mode: "create", item: created.item };
   }
 
-  const response = await fetch(`/api/prompt-personas/${encodeURIComponent(state.editingPromptPersonaId)}`, {
+  const response = await fetch(`/api/prompt-skills/${encodeURIComponent(state.editingPromptPersonaId)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(collectPromptPersonaEditorPayload()),
   });
   const payload = await readJsonSafely(response);
   if (!response.ok) {
-    throw new Error(payload.error || "保存人设失败");
+    throw new Error(payload.error || "保存技能失败");
   }
 
   await loadPromptPersonas();
@@ -2295,15 +2395,15 @@ async function savePromptPersonaFromEditor() {
 
 async function deleteEditingPromptPersona() {
   if (!state.editingPromptPersonaId) {
-    throw new Error("请先选择一个要删除的人设。");
+    throw new Error("请先选择一个要删除的技能。");
   }
 
-  const response = await fetch(`/api/prompt-personas/${encodeURIComponent(state.editingPromptPersonaId)}`, {
+  const response = await fetch(`/api/prompt-skills/${encodeURIComponent(state.editingPromptPersonaId)}`, {
     method: "DELETE",
   });
   const payload = await readJsonSafely(response);
   if (!response.ok) {
-    throw new Error(payload.error || "删除人设失败");
+    throw new Error(payload.error || "删除技能失败");
   }
 
   await loadPromptPersonas();
@@ -2327,23 +2427,26 @@ async function optimizePrompt() {
     return false;
   }
   if (!state.selectedPromptPersonaId) {
-    setOptimizeStatus("请先选择一个转译人设。", true);
+    setOptimizeStatus("请先选择一个转译技能。", true);
     return false;
   }
 
   state.optimizingPrompt = true;
   optimizePromptButton.disabled = true;
-  setOptimizeStatus("正在调用 GPT-5.4 优化提示词...");
+  setOptimizeStatus(state.baseImageFile ? "正在调用 GPT-5.4 结合基础图优化提示词..." : "正在调用 GPT-5.4 优化提示词...");
   startOptimizeProgressSimulation();
 
   try {
+    const formData = new FormData();
+    formData.set("prompt", sourcePrompt);
+    formData.set("skillId", state.selectedPromptPersonaId);
+    if (state.baseImageFile) {
+      formData.set("baseImage", state.baseImageFile, state.baseImageFile.name || "base-image.jpg");
+    }
+
     const response = await fetch("/api/optimize-prompt", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt: sourcePrompt,
-        personaId: state.selectedPromptPersonaId,
-      }),
+      body: formData,
     });
     const payload = await readJsonSafely(response);
     if (response.status === 404) {
@@ -2360,7 +2463,9 @@ async function optimizePrompt() {
 
     optimizedPromptTextarea.value = state.optimizedPrompt;
     finishOptimizeProgress("优化完成");
-    setOptimizeStatus(`提示词优化完成，当前使用人设：${payload.personaName || "未命名人设"}。`);
+    setOptimizeStatus(
+      `提示词优化完成，当前使用技能：${payload.skillName || payload.personaName || "未命名技能"}${payload.usedBaseImage ? "，并已结合基础图理解需求。" : "。"}`
+    );
     syncSubmitButtonState();
     return true;
   } catch (error) {
@@ -2393,6 +2498,7 @@ referenceInputs.forEach((input) => {
 });
 
 promptTextarea?.addEventListener("input", () => {
+  rememberPromptCursor(promptTextarea);
   if (promptTextareaMobile && promptTextareaMobile.value !== promptTextarea.value) {
     promptTextareaMobile.value = promptTextarea.value;
   }
@@ -2403,6 +2509,7 @@ promptTextarea?.addEventListener("input", () => {
 });
 
 promptTextareaMobile?.addEventListener("input", () => {
+  rememberPromptCursor(promptTextareaMobile);
   if (promptTextarea && promptTextarea.value !== promptTextareaMobile.value) {
     promptTextarea.value = promptTextareaMobile.value;
   }
@@ -2410,6 +2517,14 @@ promptTextareaMobile?.addEventListener("input", () => {
     resetOptimizedPrompt();
   }
   syncSubmitButtonState();
+});
+
+[promptTextarea, promptTextareaMobile].filter(Boolean).forEach((textarea) => {
+  ["focus", "click", "keyup", "select"].forEach((eventName) => {
+    textarea.addEventListener(eventName, () => {
+      rememberPromptCursor(textarea);
+    });
+  });
 });
 
 apiPlatformSelect?.addEventListener("change", () => {
@@ -2582,17 +2697,17 @@ promptPersonaModal?.addEventListener("click", handleModalBackdropClick);
 uploadPromptPersonaButton?.addEventListener("click", async () => {
   try {
     await uploadPromptPersonaFile();
-    setPromptPersonaModalStatus("人设上传成功。");
+    setPromptPersonaModalStatus("技能上传成功。");
     setOptimizeStatus("");
   } catch (error) {
-    const message = error instanceof Error ? error.message : "上传人设失败";
+    const message = error instanceof Error ? error.message : "上传技能失败";
     setPromptPersonaModalStatus(message, true);
   }
 });
 
 createPromptPersonaButton?.addEventListener("click", () => {
   prepareNewPromptPersona();
-  setPromptPersonaModalStatus("已切换到新建模式，填写后点击“创建人格”。");
+  setPromptPersonaModalStatus("已切换到新建模式，填写后点击“创建技能”。");
 });
 
 promptPersonaFilenameInput?.addEventListener("blur", () => {
@@ -2603,10 +2718,10 @@ promptPersonaFilenameInput?.addEventListener("blur", () => {
 savePromptPersonaButton?.addEventListener("click", async () => {
   try {
     const result = await savePromptPersonaFromEditor();
-    setPromptPersonaModalStatus(result.mode === "create" ? "人设新建成功。" : "人设已保存。");
+    setPromptPersonaModalStatus(result.mode === "create" ? "技能新建成功。" : "技能已保存。");
     setOptimizeStatus("");
   } catch (error) {
-    const message = error instanceof Error ? error.message : "保存人设失败";
+    const message = error instanceof Error ? error.message : "保存技能失败";
     setPromptPersonaModalStatus(message, true);
   }
 });
@@ -2615,17 +2730,17 @@ deletePromptPersonaButton?.addEventListener("click", async () => {
   if (!state.editingPromptPersonaId) {
     return;
   }
-  const confirmed = window.confirm("确定删除当前人设吗？对应的 md 文件也会被删除。");
+  const confirmed = window.confirm("确定删除当前技能吗？对应的 md 文件也会被删除。");
   if (!confirmed) {
     return;
   }
 
   try {
     await deleteEditingPromptPersona();
-    setPromptPersonaModalStatus("人设已删除。");
+    setPromptPersonaModalStatus("技能已删除。");
     setOptimizeStatus("");
   } catch (error) {
-    const message = error instanceof Error ? error.message : "删除人设失败";
+    const message = error instanceof Error ? error.message : "删除技能失败";
     setPromptPersonaModalStatus(message, true);
   }
 });

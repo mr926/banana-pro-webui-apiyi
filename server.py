@@ -53,7 +53,8 @@ PUBLIC_DIR = ROOT_DIR / "public"
 DATA_DIR = ROOT_DIR / "data"
 GENERATED_DIR = DATA_DIR / "generated"
 THUMB_DIR = GENERATED_DIR / "thumbs"
-PERSONAS_DIR = DATA_DIR / "personas"
+SKILLS_DIR = DATA_DIR / "skills"
+LEGACY_PERSONAS_DIR = DATA_DIR / "personas"
 HISTORY_FILE = DATA_DIR / "history.json"
 PROMPT_LIBRARY_FILE = DATA_DIR / "prompt-library.md"
 API_PLATFORMS_FILE = DATA_DIR / "api-platforms.xml"
@@ -108,7 +109,8 @@ def ensure_dirs() -> None:
     PUBLIC_DIR.mkdir(parents=True, exist_ok=True)
     GENERATED_DIR.mkdir(parents=True, exist_ok=True)
     THUMB_DIR.mkdir(parents=True, exist_ok=True)
-    PERSONAS_DIR.mkdir(parents=True, exist_ok=True)
+    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+    LEGACY_PERSONAS_DIR.mkdir(parents=True, exist_ok=True)
     if not HISTORY_FILE.exists():
         HISTORY_FILE.write_text("[]", encoding="utf-8")
     if not PROMPT_LIBRARY_FILE.exists():
@@ -1257,13 +1259,18 @@ def resolve_image_generation_api_url(api_url: str, image_model: str) -> str:
 
 
 def build_prompt(user_prompt: str, reference_count: int) -> str:
-    base = "你将收到一张基础结构图作为主要约束，请严格保留基础图的主体构图、空间关系和关键结构。"
+    base = (
+        "你将收到一张基础结构图作为主要约束，它的图片编号固定为 BASE。"
+        "请严格保留 BASE 对应图片中的主体构图、空间关系和关键结构。"
+    )
     if reference_count > 0:
         base += (
-            f"另外还会提供 {reference_count} 张参考图，它们只用于借鉴风格、材质、灯光、色彩和氛围，不要直接复制参考图中的具体主体内容。"
+            f"另外还会提供 {reference_count} 张参考图，它们会按上传顺序编号为 REF1 到 REF{reference_count}。"
+            "这些参考图只用于借鉴风格、材质、灯光、色彩和氛围，不要直接复制参考图中的具体主体内容。"
         )
     else:
         base += "没有提供风格参考图时，请根据提示词自行补足材质、光线与氛围。"
+    base += "如果用户提示词里提到 BASE、REF1、REF2 等编号，请严格按这些编号去对应图片。"
 
     if user_prompt.strip():
         base += f"\n\n用户提示词：{user_prompt.strip()}"
@@ -1282,7 +1289,7 @@ def build_payload(
 ) -> dict:
     parts = [
         {"text": build_prompt(prompt, len(reference_images))},
-        {"text": "第 1 张图是基础结构图，请以它为核心。"},
+        {"text": "图片编号 BASE。这张图是基础结构图，请以它为核心，并严格保留它的主体结构。"},
         {
             "inlineData": {
                 "mimeType": base_image["mime_type"],
@@ -1293,7 +1300,7 @@ def build_payload(
 
     for index, image in enumerate(reference_images, start=1):
         parts.append(
-            {"text": f"第 {index} 张参考图，仅用于风格参考。"},
+            {"text": f"图片编号 REF{index}。这是一张参考图，仅用于风格、材质、灯光、色彩和氛围参考。"},
         )
         parts.append(
             {
@@ -1368,22 +1375,35 @@ def extension_for_mime(mime_type: str) -> str:
 
 
 def slugify_name(value: str) -> str:
-    return re.sub(r"[^a-zA-Z0-9._-]+", "-", value).strip("-").lower() or "persona"
+    return re.sub(r"[^a-zA-Z0-9._-]+", "-", value).strip("-").lower() or "skill"
 
 
-def normalize_persona_filename(filename: str) -> str:
+def normalize_skill_filename(filename: str) -> str:
     basename = str(filename or "").strip().replace("\\", "/").split("/")[-1]
     stem, suffix = os.path.splitext(basename)
     safe_stem = re.sub(r"[^\w\u4e00-\u9fff-]+", "-", stem, flags=re.UNICODE).strip(" .-_")
     if not safe_stem:
-        safe_stem = "persona"
+        safe_stem = "skill"
     safe_suffix = suffix or ".md"
     if safe_suffix.lower() != ".md":
         safe_suffix = ".md"
     return f"{safe_stem}{safe_suffix}"
 
 
-def parse_persona_markdown(path: Path) -> Optional[dict]:
+def iter_prompt_skill_paths() -> List[Path]:
+    result: List[Path] = []
+    seen = set()
+    for directory in (SKILLS_DIR, LEGACY_PERSONAS_DIR):
+        for path in sorted(directory.glob("*.md")):
+            dedupe_key = path.name.lower()
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            result.append(path)
+    return result
+
+
+def parse_skill_markdown(path: Path) -> Optional[dict]:
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -1404,86 +1424,88 @@ def parse_persona_markdown(path: Path) -> Optional[dict]:
         "summary": summary,
         "content": content,
         "filename": path.name,
+        "storage": "skills" if path.parent == SKILLS_DIR else "legacy-personas",
     }
 
 
-def build_persona_markdown(name: str, summary: str, content: str) -> str:
+def build_skill_markdown(name: str, summary: str, content: str) -> str:
     return "\n".join([name.strip(), summary.strip(), content.strip()]).strip() + "\n"
 
 
-def read_prompt_personas() -> List[dict]:
-    personas: List[dict] = []
-    for path in sorted(PERSONAS_DIR.glob("*.md")):
-        persona = parse_persona_markdown(path)
-        if persona:
-            personas.append(persona)
-    return personas
+def read_prompt_skills() -> List[dict]:
+    skills: List[dict] = []
+    for path in iter_prompt_skill_paths():
+        skill = parse_skill_markdown(path)
+        if skill:
+            skills.append(skill)
+    return skills
 
 
-def get_prompt_persona(persona_id: str) -> Optional[dict]:
-    target_path = get_prompt_persona_path(persona_id)
+def get_prompt_skill(skill_id: str) -> Optional[dict]:
+    target_path = get_prompt_skill_path(skill_id)
     if not target_path:
         return None
-    return parse_persona_markdown(target_path)
+    return parse_skill_markdown(target_path)
 
 
-def get_prompt_persona_path(persona_id: str) -> Optional[Path]:
-    target = unquote(persona_id).strip()
+def get_prompt_skill_path(skill_id: str) -> Optional[Path]:
+    target = unquote(skill_id).strip()
     if not target:
         return None
     if "/" in target or "\\" in target or ".." in target:
         return None
 
-    direct = PERSONAS_DIR / target
-    if direct.exists() and direct.is_file() and direct.suffix.lower() == ".md":
-        return direct
+    for directory in (SKILLS_DIR, LEGACY_PERSONAS_DIR):
+        direct = directory / target
+        if direct.exists() and direct.is_file() and direct.suffix.lower() == ".md":
+            return direct
 
     lowered = target.lower()
-    for path in sorted(PERSONAS_DIR.glob("*.md")):
+    for path in iter_prompt_skill_paths():
         if path.name.lower() == lowered or slugify_name(path.stem) == lowered:
             return path
     return None
 
 
-def validate_persona_payload(payload: dict) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+def validate_skill_payload(payload: dict) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     name = str(payload.get("name", "")).strip()
     summary = str(payload.get("summary", "")).strip()
     content = str(payload.get("content", "")).strip()
-    filename = normalize_persona_filename(str(payload.get("filename", "")).strip() or "persona.md")
+    filename = normalize_skill_filename(str(payload.get("filename", "")).strip() or "skill.md")
     if not name or not summary or not content:
-        return None, None, None, "人设名称、简介和内容都不能为空。"
+        return None, None, None, "技能名称、简介和内容都不能为空。"
     return name, summary, content, filename
 
 
-def create_prompt_persona(payload: dict) -> Tuple[Optional[dict], Optional[str]]:
-    name, summary, content, filename_or_error = validate_persona_payload(payload)
+def create_prompt_skill(payload: dict) -> Tuple[Optional[dict], Optional[str]]:
+    name, summary, content, filename_or_error = validate_skill_payload(payload)
     if not name or not summary or not content:
         return None, filename_or_error
 
-    filename = filename_or_error or "persona.md"
-    target = PERSONAS_DIR / filename
-    if target.exists():
+    filename = filename_or_error or "skill.md"
+    target = SKILLS_DIR / filename
+    if target.exists() or (LEGACY_PERSONAS_DIR / filename).exists():
         return None, "同名 md 文件已存在，请先重命名后再上传。"
 
-    target.write_text(build_persona_markdown(name, summary, content), encoding="utf-8")
-    persona = parse_persona_markdown(target)
-    if not persona:
-        return None, "上传的人设文件格式不正确，必须至少包含名称、简介和正文三部分。"
-    return persona, None
+    target.write_text(build_skill_markdown(name, summary, content), encoding="utf-8")
+    skill = parse_skill_markdown(target)
+    if not skill:
+        return None, "上传的技能文件格式不正确，必须至少包含名称、简介和正文三部分。"
+    return skill, None
 
 
-def update_prompt_persona(persona_id: str, payload: dict) -> Tuple[Optional[dict], Optional[str]]:
-    target = get_prompt_persona_path(persona_id)
+def update_prompt_skill(skill_id: str, payload: dict) -> Tuple[Optional[dict], Optional[str]]:
+    target = get_prompt_skill_path(skill_id)
     if not target:
-        return None, "未找到对应的人设文件。"
+        return None, "未找到对应的技能文件。"
 
-    name, summary, content, filename_or_error = validate_persona_payload(payload)
+    name, summary, content, filename_or_error = validate_skill_payload(payload)
     error = filename_or_error if not (name and summary and content) else None
     if error:
         return None, error
 
     next_filename = filename_or_error or target.name
-    next_target = PERSONAS_DIR / next_filename
+    next_target = target.parent / next_filename
     if next_target.resolve() != target.resolve():
         if next_target.exists():
             return None, "目标文件名已存在，请换一个文件名。"
@@ -1493,15 +1515,15 @@ def update_prompt_persona(persona_id: str, payload: dict) -> Tuple[Optional[dict
         except OSError as exc:
             return None, f"重命名文件失败：{exc}"
 
-    target.write_text(build_persona_markdown(name, summary, content), encoding="utf-8")
-    persona = parse_persona_markdown(target)
-    if not persona:
-        return None, "保存失败，人设文件格式不正确。"
-    return persona, None
+    target.write_text(build_skill_markdown(name, summary, content), encoding="utf-8")
+    skill = parse_skill_markdown(target)
+    if not skill:
+        return None, "保存失败，技能文件格式不正确。"
+    return skill, None
 
 
-def delete_prompt_persona(persona_id: str) -> bool:
-    target = get_prompt_persona_path(persona_id)
+def delete_prompt_skill(skill_id: str) -> bool:
+    target = get_prompt_skill_path(skill_id)
     if not target or not target.exists():
         return False
     try:
@@ -1511,6 +1533,46 @@ def delete_prompt_persona(persona_id: str) -> bool:
     return True
 
 
+def normalize_persona_filename(filename: str) -> str:
+    return normalize_skill_filename(filename)
+
+
+def parse_persona_markdown(path: Path) -> Optional[dict]:
+    return parse_skill_markdown(path)
+
+
+def build_persona_markdown(name: str, summary: str, content: str) -> str:
+    return build_skill_markdown(name, summary, content)
+
+
+def read_prompt_personas() -> List[dict]:
+    return read_prompt_skills()
+
+
+def get_prompt_persona(persona_id: str) -> Optional[dict]:
+    return get_prompt_skill(persona_id)
+
+
+def get_prompt_persona_path(persona_id: str) -> Optional[Path]:
+    return get_prompt_skill_path(persona_id)
+
+
+def validate_persona_payload(payload: dict) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+    return validate_skill_payload(payload)
+
+
+def create_prompt_persona(payload: dict) -> Tuple[Optional[dict], Optional[str]]:
+    return create_prompt_skill(payload)
+
+
+def update_prompt_persona(persona_id: str, payload: dict) -> Tuple[Optional[dict], Optional[str]]:
+    return update_prompt_skill(persona_id, payload)
+
+
+def delete_prompt_persona(persona_id: str) -> bool:
+    return delete_prompt_skill(persona_id)
+
+
 def build_prompt_optimizer_url(base_url: str) -> str:
     normalized = base_url.rstrip("/")
     if normalized.endswith("/chat/completions"):
@@ -1518,8 +1580,43 @@ def build_prompt_optimizer_url(base_url: str) -> str:
     return normalized + "/chat/completions"
 
 
-def build_prompt_optimizer_payload(user_prompt: str, persona_content: str, model: str) -> dict:
+def build_image_data_url(upload: dict) -> str:
+    mime_type = str(upload.get("mime_type", "")).strip() or "image/jpeg"
+    base64_data = str(upload.get("base64", "")).strip()
+    if not base64_data:
+        raise ValueError("图片内容为空。")
+    return f"data:{mime_type};base64,{base64_data}"
+
+
+def build_prompt_optimizer_payload(user_prompt: str, persona_content: str, model: str, base_image: Optional[dict] = None) -> dict:
     source_text = user_prompt.strip()
+    user_content: object
+    if isinstance(base_image, dict) and base_image.get("base64"):
+        user_content = [
+            {
+                "type": "text",
+                "text": (
+                    "请结合这张基础结构图，把以下中文需求转译成适合 nano banana pro 模型生成图片使用的英文提示词。"
+                    "需要明确保留基础图中的主体构图、空间关系和关键结构。"
+                    "如果用户需求里出现 BASE、REF1、REF2 这类图片编号，请在英文提示词里原样保留这些编号，不要翻译、不要改写。"
+                    "只输出最终英文提示词，不要解释。\n\n"
+                    f"用户需求：{source_text}"
+                ),
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": build_image_data_url(base_image),
+                },
+            },
+        ]
+    else:
+        user_content = (
+            "请把以下内容转译成适合 nano banana pro 模型生成图片使用的英文提示词。"
+            "如果内容里出现 BASE、REF1、REF2 这类图片编号，请在英文提示词里原样保留这些编号，不要翻译、不要改写。\n\n"
+            f"用户需求：{source_text}"
+        )
+
     return {
         "model": model,
         "messages": [
@@ -1529,7 +1626,7 @@ def build_prompt_optimizer_payload(user_prompt: str, persona_content: str, model
             },
             {
                 "role": "user",
-                "content": f"请把以下内容转译成适合 nano banana pro 模型生成图片使用的英文提示词：{source_text}",
+                "content": user_content,
             },
         ],
     }
@@ -1682,34 +1779,37 @@ class AppHandler(BaseHTTPRequestHandler):
                 },
             )
 
-        if parsed.path == "/api/prompt-personas":
+        if parsed.path in {"/api/prompt-personas", "/api/prompt-skills"}:
             if not self.ensure_authenticated():
                 return
-            personas = read_prompt_personas()
+            skills = read_prompt_skills()
             return json_response(
                 self,
                 200,
                 {
                     "items": [
                         {
-                            "id": persona["id"],
-                            "name": persona["name"],
-                            "summary": persona["summary"],
-                            "filename": persona["filename"],
+                            "id": skill["id"],
+                            "name": skill["name"],
+                            "summary": skill["summary"],
+                            "filename": skill["filename"],
                         }
-                        for persona in personas
+                        for skill in skills
                     ]
                 },
             )
 
-        if parsed.path.startswith("/api/prompt-personas/"):
+        if parsed.path.startswith("/api/prompt-personas/") or parsed.path.startswith("/api/prompt-skills/"):
             if not self.ensure_authenticated():
                 return
-            persona_id = parsed.path.removeprefix("/api/prompt-personas/").strip()
-            persona = get_prompt_persona(persona_id)
-            if not persona:
-                return json_response(self, 404, {"error": "未找到对应的人设。"})
-            return json_response(self, 200, persona)
+            if parsed.path.startswith("/api/prompt-skills/"):
+                skill_id = parsed.path.removeprefix("/api/prompt-skills/").strip()
+            else:
+                skill_id = parsed.path.removeprefix("/api/prompt-personas/").strip()
+            skill = get_prompt_skill(skill_id)
+            if not skill:
+                return json_response(self, 404, {"error": "未找到对应的技能。"})
+            return json_response(self, 200, skill)
 
         if parsed.path == "/api/history":
             if not self.ensure_authenticated():
@@ -1794,34 +1894,40 @@ class AppHandler(BaseHTTPRequestHandler):
                 return
             return self.handle_save_prompt_library()
 
-        if parsed.path == "/api/prompt-personas":
+        if parsed.path in {"/api/prompt-personas", "/api/prompt-skills"}:
             if not self.ensure_authenticated():
                 return
-            return self.handle_create_prompt_persona()
+            return self.handle_create_prompt_skill()
 
         json_response(self, 404, {"error": "Not found"})
 
     def do_PUT(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path.startswith("/api/prompt-personas/"):
+        if parsed.path.startswith("/api/prompt-personas/") or parsed.path.startswith("/api/prompt-skills/"):
             if not self.ensure_authenticated():
                 return
-            persona_id = parsed.path.removeprefix("/api/prompt-personas/").strip()
-            if not persona_id:
-                return json_response(self, 400, {"error": "缺少要更新的人设 id。"})
-            return self.handle_update_prompt_persona(persona_id)
+            if parsed.path.startswith("/api/prompt-skills/"):
+                skill_id = parsed.path.removeprefix("/api/prompt-skills/").strip()
+            else:
+                skill_id = parsed.path.removeprefix("/api/prompt-personas/").strip()
+            if not skill_id:
+                return json_response(self, 400, {"error": "缺少要更新的技能 id。"})
+            return self.handle_update_prompt_skill(skill_id)
 
         json_response(self, 404, {"error": "Not found"})
 
     def do_DELETE(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path.startswith("/api/prompt-personas/"):
+        if parsed.path.startswith("/api/prompt-personas/") or parsed.path.startswith("/api/prompt-skills/"):
             if not self.ensure_authenticated():
                 return
-            persona_id = parsed.path.removeprefix("/api/prompt-personas/").strip()
-            if not persona_id:
-                return json_response(self, 400, {"error": "缺少要删除的人设 id。"})
-            return self.handle_delete_prompt_persona(persona_id)
+            if parsed.path.startswith("/api/prompt-skills/"):
+                skill_id = parsed.path.removeprefix("/api/prompt-skills/").strip()
+            else:
+                skill_id = parsed.path.removeprefix("/api/prompt-personas/").strip()
+            if not skill_id:
+                return json_response(self, 400, {"error": "缺少要删除的技能 id。"})
+            return self.handle_delete_prompt_skill(skill_id)
 
         if parsed.path.startswith("/api/history/"):
             if not self.ensure_authenticated():
@@ -2155,28 +2261,28 @@ class AppHandler(BaseHTTPRequestHandler):
             },
         )
 
-    def handle_create_prompt_persona(self) -> None:
+    def handle_create_prompt_skill(self) -> None:
         try:
             payload = self.read_json_body()
         except Exception:
-            return json_response(self, 400, {"error": "人设上传请求格式不正确。"})
+            return json_response(self, 400, {"error": "技能上传请求格式不正确。"})
 
-        persona, error = create_prompt_persona(payload)
+        skill, error = create_prompt_skill(payload)
         if error:
             return json_response(self, 400, {"error": error})
-        return json_response(self, 200, {"ok": True, "item": persona})
+        return json_response(self, 200, {"ok": True, "item": skill})
 
-    def handle_update_prompt_persona(self, persona_id: str) -> None:
+    def handle_update_prompt_skill(self, skill_id: str) -> None:
         try:
             payload = self.read_json_body()
         except Exception:
-            return json_response(self, 400, {"error": "人设保存请求格式不正确。"})
+            return json_response(self, 400, {"error": "技能保存请求格式不正确。"})
 
-        persona, error = update_prompt_persona(persona_id, payload)
+        skill, error = update_prompt_skill(skill_id, payload)
         if error:
             status = 404 if "未找到" in error else 400
             return json_response(self, status, {"error": error})
-        return json_response(self, 200, {"ok": True, "item": persona})
+        return json_response(self, 200, {"ok": True, "item": skill})
 
     def handle_optimize_prompt(self) -> None:
         api_key = get_setting("BANANA_PRO_LLM_API_KEY") or get_default_image_platform_api_key()
@@ -2195,25 +2301,34 @@ class AppHandler(BaseHTTPRequestHandler):
                 {"error": "缺少 BANANA_PRO_LLM_API_KEY，且默认图片平台也没有可用 key，请先在 .env 或 data/api-platforms.xml 中配置。"},
             )
 
-        try:
-            payload = self.read_json_body()
-        except Exception:
-            return json_response(self, 400, {"error": "提示词优化请求格式不正确。"})
+        content_type = self.headers.get("Content-Type", "")
+        base_image = None
+        if "multipart/form-data" in content_type:
+            payload = self.parse_multipart_form()
+            if payload is None:
+                return
+            if isinstance(payload.get("baseImage"), dict):
+                base_image = payload.get("baseImage")
+        else:
+            try:
+                payload = self.read_json_body()
+            except Exception:
+                return json_response(self, 400, {"error": "提示词优化请求格式不正确。"})
 
         prompt = str(payload.get("prompt", "")).strip()
-        persona_id = str(payload.get("personaId", "")).strip()
+        skill_id = str(payload.get("skillId", "")).strip() or str(payload.get("personaId", "")).strip()
         if not prompt:
             return json_response(self, 400, {"error": "请先提供需要优化的提示词。"})
 
-        personas = read_prompt_personas()
-        if not personas:
-            return json_response(self, 500, {"error": "未找到可用的人设文件，请先在 data/personas 中添加 .md 文件。"})
+        skills = read_prompt_skills()
+        if not skills:
+            return json_response(self, 500, {"error": "未找到可用的技能文件，请先在 data/skills 中添加 .md 文件。旧版 data/personas 目录也会自动兼容。"})
 
-        persona = get_prompt_persona(persona_id) if persona_id else personas[0]
-        if not persona:
-            return json_response(self, 400, {"error": "未找到对应的人设，请重新选择。"})
+        skill = get_prompt_skill(skill_id) if skill_id else skills[0]
+        if not skill:
+            return json_response(self, 400, {"error": "未找到对应的技能，请重新选择。"})
 
-        request_payload = build_prompt_optimizer_payload(prompt, persona["content"], llm_model)
+        request_payload = build_prompt_optimizer_payload(prompt, skill["content"], llm_model, base_image=base_image)
         request_body = json.dumps(request_payload).encode("utf-8")
 
         try:
@@ -2259,8 +2374,11 @@ class AppHandler(BaseHTTPRequestHandler):
             {
                 "prompt": optimized_prompt,
                 "model": llm_model,
-                "personaId": persona["id"],
-                "personaName": persona["name"],
+                "skillId": skill["id"],
+                "skillName": skill["name"],
+                "usedBaseImage": bool(base_image),
+                "personaId": skill["id"],
+                "personaName": skill["name"],
             },
         )
 
@@ -2452,10 +2570,19 @@ class AppHandler(BaseHTTPRequestHandler):
             },
         )
 
+    def handle_delete_prompt_skill(self, skill_id: str) -> None:
+        if not delete_prompt_skill(skill_id):
+            return json_response(self, 404, {"error": "未找到对应的技能文件。"})
+        json_response(self, 200, {"ok": True, "id": skill_id})
+
+    def handle_create_prompt_persona(self) -> None:
+        return self.handle_create_prompt_skill()
+
+    def handle_update_prompt_persona(self, persona_id: str) -> None:
+        return self.handle_update_prompt_skill(persona_id)
+
     def handle_delete_prompt_persona(self, persona_id: str) -> None:
-        if not delete_prompt_persona(persona_id):
-            return json_response(self, 404, {"error": "未找到对应的人设文件。"})
-        json_response(self, 200, {"ok": True, "id": persona_id})
+        return self.handle_delete_prompt_skill(persona_id)
 
     def parse_multipart_form(self) -> Optional[dict]:
         content_type = self.headers.get("Content-Type", "")
