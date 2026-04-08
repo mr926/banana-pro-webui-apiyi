@@ -66,7 +66,7 @@ const state = {
   notificationPermissionPromise: null,
   historyHydrated: false,
   historyPage: 1,
-  historyPageSize: 6,
+  historyPageSize: 10,
   historyTotal: 0,
   historyTotalPages: 0,
   audioContext: null,
@@ -111,7 +111,7 @@ const BASE_IMAGE_MAX_LONG_EDGE = 4000;
 const BASE_IMAGE_QUALITY = 0.85;
 const REFERENCE_IMAGE_MAX_BYTES = 2 * MB;
 const REFERENCE_IMAGE_LIMIT = 6;
-const HISTORY_PAGE_SIZE = 6;
+const HISTORY_PAGE_SIZE = 10;
 const IMAGE_TRANSFER_QUEUE_KEY = "banana-pro-image-transfer-queue";
 const DEFAULT_PAGE_TITLE = document.title;
 
@@ -1005,6 +1005,14 @@ function renderApiPlatformOptions() {
     apiPlatformSelect.appendChild(option);
   });
   apiPlatformSelect.disabled = false;
+
+  // Sync mobile select
+  const mSel = document.getElementById("api-platform-select-m");
+  if (mSel) {
+    mSel.innerHTML = apiPlatformSelect.innerHTML;
+    mSel.disabled = apiPlatformSelect.disabled;
+    mSel.value = apiPlatformSelect.value;
+  }
 }
 
 function syncImageModelOptions(preferredModel = "") {
@@ -1041,12 +1049,33 @@ function syncImageModelOptions(preferredModel = "") {
   });
   imageModelSelect.disabled = !platform.models.length;
 
+  // Sync mobile select
+  const mSel = document.getElementById("image-model-select-m");
+  if (mSel) {
+    mSel.innerHTML = imageModelSelect.innerHTML;
+    mSel.disabled = imageModelSelect.disabled;
+    mSel.value = imageModelSelect.value;
+  }
+
   const hintParts = [platform.name];
   if (state.selectedImageModel) {
     hintParts.push(`当前模型 ${state.selectedImageModel}`);
   }
   hintParts.push(`${platform.models.length} 个可选模型`);
   setApiPlatformHint(hintParts.join(" · "));
+}
+
+function syncHeaderChips() {
+  if (typeof window.updateHeaderChips !== "function") return;
+  const platform = state.apiPlatforms.find(p => p.id === state.selectedApiPlatformId);
+  const checkedRatio = document.querySelector('input[name="aspectRatio"]:checked');
+  const checkedSize = document.querySelector('input[name="imageSize"]:checked');
+  window.updateHeaderChips({
+    platform: platform?.name || "",
+    model: state.selectedImageModel || "",
+    ratio: checkedRatio?.value || "自动",
+    size: checkedSize?.value || "4K",
+  });
 }
 
 function applyApiPlatformSelection(platformId, preferredModel = "") {
@@ -1059,6 +1088,7 @@ function applyApiPlatformSelection(platformId, preferredModel = "") {
   renderApiPlatformOptions();
   syncImageModelOptions(preferredModel);
   syncSubmitButtonState();
+  syncHeaderChips();
 }
 
 function resetApiPlatforms(message = "登录后加载 API 平台配置。") {
@@ -1561,79 +1591,95 @@ function finishOptimizeProgress(message = "优化完成") {
   if (value) value.textContent = "100%";
 }
 
+function buildHistoryNode(entry) {
+  const node = historyTemplate.content.firstElementChild.cloneNode(true);
+  const img = node.querySelector(".history-image");
+  const time = node.querySelector(".history-time");
+  const tags = node.querySelector(".history-tags");
+  const viewButton = node.querySelector(".history-view");
+  const downloadLink = node.querySelector(".history-download");
+  const copyButton = node.querySelector(".history-copy");
+  const sendBaseButton = node.querySelector(".history-send-base");
+  const sendReferenceButton = node.querySelector(".history-send-reference");
+  const deleteButton = node.querySelector(".history-delete");
+  const hasPrompt = Boolean(String(entry.prompt || "").trim());
+
+  const thumbUrl = getPreferredThumbUrl(entry) || getPreferredImageUrl(entry);
+  const imageUrl = getPreferredImageUrl(entry);
+  img.src = thumbUrl;
+  img.alt = entry.prompt || "历史图片";
+  img.loading = "lazy";
+  img.decoding = "async";
+  time.textContent = formatDate(entry.createdAt);
+  tags.textContent = [
+    entry.aspectRatio,
+    entry.imageSize,
+    entry.apiPlatformName || "",
+    entry.imageModel || "",
+  ].filter(Boolean).join(" · ");
+
+  viewButton.addEventListener("click", () => {
+    renderCurrentResult(entry);
+    // On mobile, switch to result tab
+    if (window.onMobileResultReady) window.onMobileResultReady();
+  });
+
+  downloadLink.href = imageUrl;
+  downloadLink.download = entry.downloadName || "banana-pro-image";
+  downloadLink.addEventListener("click", async (event) => {
+    event.preventDefault();
+    try {
+      await downloadEntryImage(entry);
+    } catch (error) {
+      if (error instanceof Error && error.message === "__AUTH_REQUIRED__") {
+        setAuthUI(false, true);
+        setStatus("登录后可下载图片。", true);
+        return;
+      }
+      const message = error instanceof Error ? error.message : "下载失败，请重试。";
+      setStatus(message, true);
+    }
+  });
+  if (copyButton) {
+    copyButton.disabled = !hasPrompt;
+    copyButton.addEventListener("click", async () => {
+      await copyPromptText(entry.prompt, "历史提示词");
+    });
+  }
+  sendBaseButton?.addEventListener("click", async () => {
+    await sendImageToBaseFromEntry(entry);
+  });
+  sendReferenceButton?.addEventListener("click", async () => {
+    await sendImageToReferenceFromEntry(entry);
+  });
+  deleteButton.addEventListener("click", async () => {
+    await deleteHistoryItem(entry.id, state.currentResult?.id === entry.id);
+  });
+
+  return node;
+}
+
 function renderHistory(items) {
   const latestItems = Array.isArray(items) ? items : [];
-  historyList.innerHTML = "";
+  const mobileHistoryList = document.getElementById("history-list-mobile");
+
+  const emptyHtml = `<div class="empty-history">还没有历史记录，先生成第一张吧。</div>`;
 
   if (latestItems.length === 0) {
-    historyList.innerHTML = `<div class="empty-history">还没有历史记录，先生成第一张吧。</div>`;
+    historyList.innerHTML = emptyHtml;
+    if (mobileHistoryList) mobileHistoryList.innerHTML = emptyHtml;
     return;
   }
 
+  historyList.innerHTML = "";
+  if (mobileHistoryList) mobileHistoryList.innerHTML = "";
+
   latestItems.forEach((entry) => {
-    const node = historyTemplate.content.firstElementChild.cloneNode(true);
-    const img = node.querySelector(".history-image");
-    const time = node.querySelector(".history-time");
-    const tags = node.querySelector(".history-tags");
-    const prompt = node.querySelector(".history-prompt");
-    const viewButton = node.querySelector(".history-view");
-    const downloadLink = node.querySelector(".history-download");
-    const copyButton = node.querySelector(".history-copy");
-    const sendBaseButton = node.querySelector(".history-send-base");
-    const sendReferenceButton = node.querySelector(".history-send-reference");
-    const deleteButton = node.querySelector(".history-delete");
-    const hasPrompt = Boolean(String(entry.prompt || "").trim());
-
-    const thumbUrl = getPreferredThumbUrl(entry) || getPreferredImageUrl(entry);
-    const imageUrl = getPreferredImageUrl(entry);
-    img.src = thumbUrl;
-    img.alt = entry.prompt || "历史图片";
-    img.loading = "lazy";
-    img.decoding = "async";
-    time.textContent = formatDate(entry.createdAt);
-    tags.textContent = [
-      entry.aspectRatio,
-      entry.imageSize,
-      entry.apiPlatformName || "",
-      entry.imageModel || "",
-    ].filter(Boolean).join(" · ");
-    prompt.textContent = "";
-
-    viewButton.addEventListener("click", () => renderCurrentResult(entry));
-
-    downloadLink.href = imageUrl;
-    downloadLink.download = entry.downloadName || "banana-pro-image";
-    downloadLink.addEventListener("click", async (event) => {
-      event.preventDefault();
-      try {
-        await downloadEntryImage(entry);
-      } catch (error) {
-        if (error instanceof Error && error.message === "__AUTH_REQUIRED__") {
-          setAuthUI(false, true);
-          setStatus("登录后可下载图片。", true);
-          return;
-        }
-        const message = error instanceof Error ? error.message : "下载失败，请重试。";
-        setStatus(message, true);
-      }
-    });
-    if (copyButton) {
-      copyButton.disabled = !hasPrompt;
-      copyButton.addEventListener("click", async () => {
-        await copyPromptText(entry.prompt, "历史提示词");
-      });
-    }
-    sendBaseButton?.addEventListener("click", async () => {
-      await sendImageToBaseFromEntry(entry);
-    });
-    sendReferenceButton?.addEventListener("click", async () => {
-      await sendImageToReferenceFromEntry(entry);
-    });
-    deleteButton.addEventListener("click", async () => {
-      await deleteHistoryItem(entry.id, state.currentResult?.id === entry.id);
-    });
-
+    const node = buildHistoryNode(entry);
     historyList.appendChild(node);
+    if (mobileHistoryList) {
+      mobileHistoryList.appendChild(buildHistoryNode(entry));
+    }
   });
 }
 
@@ -1746,6 +1792,9 @@ async function hydrateAuthenticatedWorkspace() {
       }
     }
   }
+
+  // Update header chips after everything loads
+  syncHeaderChips();
 
   try {
     await applyPendingImageTransfers();
@@ -2047,6 +2096,7 @@ imageModelSelect?.addEventListener("change", () => {
   state.selectedImageModel = imageModelSelect.value;
   syncImageModelOptions(state.selectedImageModel);
   syncSubmitButtonState();
+  syncHeaderChips();
 });
 
 promptPersonaSelect?.addEventListener("change", () => {
@@ -2067,6 +2117,7 @@ form.querySelectorAll('input[name="promptMode"]').forEach((node) => {
 aspectRatioGroup?.querySelectorAll('input[name="aspectRatio"]').forEach((node) => {
   node.addEventListener("change", () => {
     syncAspectRatioPreview();
+    syncHeaderChips();
   });
 });
 
@@ -2140,6 +2191,8 @@ form.addEventListener("submit", async (event) => {
     sendBrowserNotification("Banana Pro 图片生成成功", "图片已经生成完成，可以回到页面查看和下载。");
     startTitleFlash("生成成功");
     renderCurrentResult(payload);
+    // Notify mobile tab system to switch to result
+    if (window.onMobileResultReady) window.onMobileResultReady();
     await loadHistory(1);
   } catch (error) {
     clearProgress();
