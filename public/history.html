@@ -3,7 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f2f2f7" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Banana Pro" />
     <title>Banana Pro 历史相册</title>
+    <link rel="manifest" href="/app.webmanifest" />
+    <link rel="apple-touch-icon" href="/app-icon-180.png" sizes="180x180" />
+    <link rel="icon" href="/app-icon-192.png" sizes="192x192" type="image/png" />
+    <link rel="icon" href="/app-icon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -21,6 +29,17 @@
           <a href="/" class="ghost-button">返回工作台</a>
         </div>
       </header>
+      <section class="platform-handoff surface-card" data-platform-handoff>
+        <div class="platform-handoff-copy">
+          <div class="eyebrow">Web App</div>
+          <strong data-platform-title>历史相册会按设备切换保存方式</strong>
+          <p data-platform-description>桌面端维持高频下载，移动端优先打包或调起系统分享，减少浏览器拦截。</p>
+        </div>
+        <div class="platform-handoff-actions">
+          <button type="button" class="ghost-button hidden" data-install-app>安装到桌面</button>
+          <button type="button" class="ghost-button hidden" data-enable-notifications>开启通知</button>
+        </div>
+      </section>
       <p id="album-selection-status" class="album-selection-status">已选择 0 张</p>
 
       <main>
@@ -77,6 +96,7 @@
       </article>
     </template>
 
+    <script src="/pwa.js" defer></script>
     <script src="/history.js" defer></script>
   </body>
 </html>

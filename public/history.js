@@ -27,6 +27,14 @@ const albumState = {
   totalPages: 0,
 };
 
+function getPwaRuntime() {
+  return window.BananaPWA || null;
+}
+
+function getDownloadActionLabel(kind = "single") {
+  return getPwaRuntime()?.getDownloadActionLabel(kind) || (kind === "batch" ? "批量下载" : "下载");
+}
+
 function getPreferredImageUrl(entry) {
   return String(entry?.ossImageUrl || entry?.imageUrl || "").trim();
 }
@@ -237,12 +245,23 @@ async function resolveDownloadTarget(entry) {
 
 async function downloadEntryImage(entry) {
   const target = await resolveDownloadTarget(entry);
+  const runtime = getPwaRuntime();
   const downloadUrl = buildDirectDownloadUrl(target.url, target.downloadName);
-  if (target.source === "oss-signed") {
-    triggerBackgroundRequest(downloadUrl);
-    return;
+  if (!runtime) {
+    if (target.source === "oss-signed") {
+      triggerBackgroundRequest(downloadUrl);
+      return { method: "iframe" };
+    }
+    triggerBrowserDownload(downloadUrl, target.downloadName);
+    return { method: "anchor" };
   }
-  triggerBrowserDownload(downloadUrl, target.downloadName);
+  return runtime.deliverDownload({
+    url: downloadUrl,
+    filename: target.downloadName,
+    source: target.source,
+    title: "Banana Pro 历史图片",
+    text: "可以保存到本地，也可以直接转发到其他应用。",
+  });
 }
 
 function getHistorySummaryText() {
@@ -342,6 +361,25 @@ async function downloadSelectedInBatch() {
   }
 
   try {
+    const runtime = getPwaRuntime();
+    if (runtime?.platform?.isMobile) {
+      const archive = await runtime.requestArchive(
+        "/api/history/download-zip",
+        { ids },
+        `banana-pro-history-${new Date().toISOString().slice(0, 10)}.zip`,
+      );
+      const result = await runtime.deliverBlobDownload({
+        blob: archive.blob,
+        filename: archive.filename,
+        title: "Banana Pro 历史相册",
+        text: "历史图片压缩包已准备完成。",
+      });
+      if (result?.method !== "cancelled") {
+        alert("已准备打包文件，你可以直接保存或分享。");
+      }
+      return;
+    }
+
     const response = await fetch("/api/history/download-links", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -388,10 +426,16 @@ async function downloadSelectedInBatch() {
       alert(`已触发下载：OSS ${ossCount} 张，本地 ${localCount} 张，跳过 ${skipped} 张。`);
     }
   } catch (error) {
+    if (error?.status === 401) {
+      setAlbumAuthUI(false, true);
+      albumGrid.innerHTML = `<div class="empty-history">登录后可查看历史相册。</div>`;
+      resetAlbumPagination(true);
+      return;
+    }
     alert(error instanceof Error ? error.message : "批量下载失败");
   } finally {
     if (albumDownloadSelectedButton) {
-      albumDownloadSelectedButton.textContent = "批量下载选中";
+      albumDownloadSelectedButton.textContent = getDownloadActionLabel("batch");
     }
     syncAlbumToolbar();
   }
@@ -438,6 +482,7 @@ function renderAlbum(items) {
     node.querySelector(".album-open").href = imageUrl;
     downloadLink.href = imageUrl;
     downloadLink.download = entry.downloadName || "banana-pro-image";
+    downloadLink.textContent = getDownloadActionLabel("single");
     downloadLink.addEventListener("click", async (event) => {
       event.preventDefault();
       try {
@@ -528,6 +573,9 @@ albumLoginForm.addEventListener("submit", async (event) => {
 
 async function bootstrapAlbum() {
   try {
+    if (albumDownloadSelectedButton) {
+      albumDownloadSelectedButton.textContent = getDownloadActionLabel("batch");
+    }
     const response = await fetch("/api/auth/status");
     const payload = await readJsonSafely(response);
     setAlbumAuthUI(Boolean(payload.authenticated), Boolean(payload.passwordEnabled));

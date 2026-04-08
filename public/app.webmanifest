@@ -1,0 +1,43 @@
+{
+  "name": "Banana Pro 图生图工作台",
+  "short_name": "Banana Pro",
+  "description": "面向创作者的轻量图生图 Web 工作台，可安装到桌面并适配移动端上传、保存与完成通知。",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f2f2f7",
+  "theme_color": "#f2f2f7",
+  "icons": [
+    {
+      "src": "/app-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/app-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "开始生成",
+      "short_name": "生成",
+      "url": "/"
+    },
+    {
+      "name": "历史相册",
+      "short_name": "历史",
+      "url": "/history.html"
+    }
+  ]
+}

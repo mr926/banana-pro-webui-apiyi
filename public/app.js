@@ -3,10 +3,14 @@ const baseInput = document.getElementById("base-image");
 const referenceInput = document.getElementById("reference-images");
 const basePreview = document.getElementById("base-preview");
 const referencePreview = document.getElementById("reference-preview");
+const basePreviewMobile = document.getElementById("base-preview-m");
+const referencePreviewMobile = document.getElementById("reference-preview-m");
 const submitButton = document.getElementById("submit-button");
 const formStatus = document.getElementById("form-status");
 const resultStage = document.getElementById("result-stage");
 const resultMeta = document.getElementById("result-meta");
+const resultStageMobile = document.getElementById("result-stage-mobile");
+const resultMetaMobile = document.getElementById("result-meta-mobile");
 const historyList = document.getElementById("history-list");
 const historyTemplate = document.getElementById("history-item-template");
 const refreshHistoryButton = document.getElementById("refresh-history");
@@ -23,10 +27,13 @@ const authStatus = document.getElementById("auth-status");
 const logoutButton = document.getElementById("logout-button");
 const apiPlatformSelect = document.getElementById("api-platform-select");
 const imageModelSelect = document.getElementById("image-model-select");
+const apiPlatformSelectMobile = document.getElementById("api-platform-select-m");
+const imageModelSelectMobile = document.getElementById("image-model-select-m");
 const apiPlatformHint = document.getElementById("api-platform-hint");
 const promptLibrarySelect = document.getElementById("prompt-library-select");
 const managePromptLibraryButton = document.getElementById("manage-prompt-library-button");
 const promptTextarea = document.getElementById("prompt");
+const promptTextareaMobile = document.getElementById("prompt-m");
 const optimizePromptButton = document.getElementById("optimize-prompt-button");
 const optimizedPromptPanel = document.getElementById("optimized-prompt-panel");
 const optimizedPromptTextarea = document.getElementById("optimized-prompt");
@@ -114,8 +121,23 @@ const REFERENCE_IMAGE_LIMIT = 6;
 const HISTORY_PAGE_SIZE = 10;
 const IMAGE_TRANSFER_QUEUE_KEY = "banana-pro-image-transfer-queue";
 const DEFAULT_PAGE_TITLE = document.title;
+const basePreviewTargets = [basePreview, basePreviewMobile].filter(Boolean);
+const referencePreviewTargets = [referencePreview, referencePreviewMobile].filter(Boolean);
+const resultTargets = [
+  { stage: resultStage, meta: resultMeta },
+  { stage: resultStageMobile, meta: resultMetaMobile },
+].filter((item) => item.stage && item.meta);
+
+function getPwaRuntime() {
+  return window.BananaPWA || null;
+}
+
+function getDownloadActionLabel(kind = "single") {
+  return getPwaRuntime()?.getDownloadActionLabel(kind) || (kind === "batch" ? "批量下载" : "直接下载");
+}
 
 function revokePreviewUrls(container) {
+  if (!container) return;
   container.querySelectorAll("[data-object-url]").forEach((img) => {
     URL.revokeObjectURL(img.dataset.objectUrl);
   });
@@ -335,11 +357,22 @@ async function resolveDownloadTarget(entry) {
 
 async function downloadEntryImage(entry) {
   const target = await resolveDownloadTarget(entry);
-  if (target.source === "oss-signed") {
-    triggerBackgroundDownload(target.url);
-    return;
+  const runtime = getPwaRuntime();
+  if (!runtime) {
+    if (target.source === "oss-signed") {
+      triggerBackgroundDownload(target.url);
+      return { method: "iframe" };
+    }
+    triggerDownloadLink(target.url, target.downloadName);
+    return { method: "anchor" };
   }
-  triggerDownloadLink(target.url, target.downloadName);
+  return runtime.deliverDownload({
+    url: target.url,
+    filename: target.downloadName,
+    source: target.source,
+    title: "Banana Pro 图片已生成",
+    text: "可以保存到本地，也可以直接转发到其他应用。",
+  });
 }
 
 async function fetchImageAsFile(imageUrl, preferredName = "history-image") {
@@ -479,6 +512,181 @@ async function compressReferenceImageIfNeeded(file) {
   throw new Error(`参考图 ${file.name} 压缩后仍超过 2MB，请换一张图片再试。`);
 }
 
+async function applyBaseInputFiles(files) {
+  const incomingFiles = Array.from(files || []);
+  const file = incomingFiles[0] || null;
+  let processedFile = file;
+  const ignoredCount = Math.max(0, incomingFiles.length - 1);
+
+  if (file) {
+    try {
+      const result = await compressBaseImageIfNeeded(file);
+      processedFile = result.file;
+      if (result.compressed) {
+        setStatus(
+          `基础结构图已压缩为 JPG，${formatFileSize(file.size)} -> ${formatFileSize(processedFile.size)}。${ignoredCount > 0 ? ` 另有 ${ignoredCount} 个文件已忽略。` : ""}`,
+        );
+      } else if (ignoredCount > 0) {
+        setStatus(`基础结构图已更新，另有 ${ignoredCount} 个文件已忽略。`);
+      } else {
+        setStatus("");
+      }
+    } catch (error) {
+      processedFile = null;
+      baseInput.value = "";
+      const message = error instanceof Error ? error.message : "基础结构图压缩失败。";
+      setStatus(message, true);
+    }
+  }
+
+  state.baseImageFile = processedFile;
+  if (processedFile) {
+    syncNativeInputFiles(baseInput, [processedFile]);
+  }
+  baseInput.required = !state.baseImageFile;
+  renderBasePreview();
+  syncSubmitButtonState();
+}
+
+async function appendReferenceInputFiles(files) {
+  const newFiles = Array.from(files || []);
+  if (newFiles.length === 0) {
+    return;
+  }
+
+  const remainingSlots = Math.max(0, REFERENCE_IMAGE_LIMIT - state.referenceFiles.length);
+  const acceptedFiles = newFiles.slice(0, remainingSlots);
+  const processedFiles = [];
+  let compressedCount = 0;
+  let failedCount = 0;
+
+  for (const file of acceptedFiles) {
+    try {
+      const result = await compressReferenceImageIfNeeded(file);
+      processedFiles.push(result.file);
+      if (result.compressed) {
+        compressedCount += 1;
+      }
+    } catch (error) {
+      failedCount += 1;
+    }
+  }
+
+  state.referenceFiles = [...state.referenceFiles, ...processedFiles];
+  syncNativeInputFiles(referenceInput, state.referenceFiles);
+
+  const messages = [];
+  if (compressedCount > 0) {
+    messages.push(`${compressedCount} 张参考图已压缩到 2MB 以内。`);
+  }
+  if (newFiles.length > remainingSlots) {
+    messages.push(`参考图最多上传 ${REFERENCE_IMAGE_LIMIT} 张，超出的图片已忽略。`);
+  }
+  if (failedCount > 0) {
+    messages.push(`${failedCount} 张参考图压缩失败，已跳过。`);
+  }
+
+  if (messages.length > 0) {
+    setStatus(messages.join(" "), failedCount > 0);
+  } else {
+    setStatus("");
+  }
+  renderReferencePreview();
+  syncSubmitButtonState();
+}
+
+function openImagePicker(target, mode = "library") {
+  const input = target === "reference" ? referenceInput : baseInput;
+  const previousCapture = input.getAttribute("capture");
+  input.value = "";
+  if (mode === "camera") {
+    input.setAttribute("capture", "environment");
+  } else {
+    input.removeAttribute("capture");
+  }
+  input.click();
+  window.setTimeout(() => {
+    if (previousCapture) {
+      input.setAttribute("capture", previousCapture);
+    } else {
+      input.removeAttribute("capture");
+    }
+  }, 1500);
+}
+
+function bindUploadQuickActions() {
+  document.querySelectorAll("[data-upload-trigger]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const target = button.getAttribute("data-upload-trigger") || "base";
+      const mode = button.getAttribute("data-upload-mode") || "library";
+      openImagePicker(target, mode);
+    });
+  });
+}
+
+function bindUploadDropZones() {
+  const handlers = {
+    base: async (files) => applyBaseInputFiles(files),
+    reference: async (files) => appendReferenceInputFiles(files),
+  };
+
+  document.querySelectorAll("[data-upload-zone]").forEach((zone) => {
+    const target = zone.getAttribute("data-upload-zone") || "base";
+    const handleFiles = handlers[target];
+    if (!handleFiles) return;
+
+    ["dragenter", "dragover"].forEach((eventName) => {
+      zone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        zone.classList.add("is-dragover");
+      });
+    });
+    ["dragleave", "drop"].forEach((eventName) => {
+      zone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        zone.classList.remove("is-dragover");
+      });
+    });
+    zone.addEventListener("drop", async (event) => {
+      const droppedFiles = event.dataTransfer?.files;
+      if (!droppedFiles?.length) {
+        return;
+      }
+      await handleFiles(droppedFiles);
+    });
+  });
+}
+
+function bindMirroredRadioGroup(desktopName, mobileName) {
+  const desktopNodes = Array.from(document.querySelectorAll(`input[name="${desktopName}"]`));
+  const mobileNodes = Array.from(document.querySelectorAll(`input[name="${mobileName}"]`));
+  if (!desktopNodes.length || !mobileNodes.length) return;
+
+  const syncMobile = () => {
+    const selected = desktopNodes.find((node) => node.checked)?.value;
+    mobileNodes.forEach((node) => {
+      node.checked = node.value === selected;
+    });
+  };
+
+  const syncDesktop = () => {
+    const selected = mobileNodes.find((node) => node.checked)?.value;
+    if (!selected) return;
+    const target = desktopNodes.find((node) => node.value === selected);
+    if (!target) return;
+    target.checked = true;
+    target.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+
+  desktopNodes.forEach((node) => {
+    node.addEventListener("change", syncMobile);
+  });
+  mobileNodes.forEach((node) => {
+    node.addEventListener("change", syncDesktop);
+  });
+  syncMobile();
+}
+
 function renderFiles(container, files, typeLabel, options = {}) {
   revokePreviewUrls(container);
   container.innerHTML = "";
@@ -522,23 +730,27 @@ function renderFiles(container, files, typeLabel, options = {}) {
 
 function renderBasePreview() {
   const files = state.baseImageFile ? [state.baseImageFile] : [];
-  renderFiles(basePreview, files, "基础图", {
-    onRemove: () => {
-      state.baseImageFile = null;
-      baseInput.value = "";
-      baseInput.required = true;
-      renderBasePreview();
-    },
+  basePreviewTargets.forEach((container) => {
+    renderFiles(container, files, "基础图", {
+      onRemove: () => {
+        state.baseImageFile = null;
+        baseInput.value = "";
+        baseInput.required = true;
+        renderBasePreview();
+      },
+    });
   });
 }
 
 function renderReferencePreview() {
-  renderFiles(referencePreview, state.referenceFiles, "参考图", {
-    onRemove: (index) => {
-      state.referenceFiles.splice(index, 1);
-      syncNativeInputFiles(referenceInput, state.referenceFiles);
-      renderReferencePreview();
-    },
+  referencePreviewTargets.forEach((container) => {
+    renderFiles(container, state.referenceFiles, "参考图", {
+      onRemove: (index) => {
+        state.referenceFiles.splice(index, 1);
+        syncNativeInputFiles(referenceInput, state.referenceFiles);
+        renderReferencePreview();
+      },
+    });
   });
 }
 
@@ -1007,11 +1219,10 @@ function renderApiPlatformOptions() {
   apiPlatformSelect.disabled = false;
 
   // Sync mobile select
-  const mSel = document.getElementById("api-platform-select-m");
-  if (mSel) {
-    mSel.innerHTML = apiPlatformSelect.innerHTML;
-    mSel.disabled = apiPlatformSelect.disabled;
-    mSel.value = apiPlatformSelect.value;
+  if (apiPlatformSelectMobile) {
+    apiPlatformSelectMobile.innerHTML = apiPlatformSelect.innerHTML;
+    apiPlatformSelectMobile.disabled = apiPlatformSelect.disabled;
+    apiPlatformSelectMobile.value = apiPlatformSelect.value;
   }
 }
 
@@ -1050,11 +1261,10 @@ function syncImageModelOptions(preferredModel = "") {
   imageModelSelect.disabled = !platform.models.length;
 
   // Sync mobile select
-  const mSel = document.getElementById("image-model-select-m");
-  if (mSel) {
-    mSel.innerHTML = imageModelSelect.innerHTML;
-    mSel.disabled = imageModelSelect.disabled;
-    mSel.value = imageModelSelect.value;
+  if (imageModelSelectMobile) {
+    imageModelSelectMobile.innerHTML = imageModelSelect.innerHTML;
+    imageModelSelectMobile.disabled = imageModelSelect.disabled;
+    imageModelSelectMobile.value = imageModelSelect.value;
   }
 
   const hintParts = [platform.name];
@@ -1100,9 +1310,17 @@ function resetApiPlatforms(message = "登录后加载 API 平台配置。") {
     apiPlatformSelect.disabled = true;
     apiPlatformSelect.innerHTML = `<option value="">暂无平台配置</option>`;
   }
+  if (apiPlatformSelectMobile) {
+    apiPlatformSelectMobile.disabled = true;
+    apiPlatformSelectMobile.innerHTML = `<option value="">暂无平台配置</option>`;
+  }
   if (imageModelSelect) {
     imageModelSelect.disabled = true;
     imageModelSelect.innerHTML = `<option value="">暂无模型可选</option>`;
+  }
+  if (imageModelSelectMobile) {
+    imageModelSelectMobile.disabled = true;
+    imageModelSelectMobile.innerHTML = `<option value="">暂无模型可选</option>`;
   }
   setApiPlatformHint(message);
   syncSubmitButtonState();
@@ -1202,37 +1420,34 @@ function syncAspectRatioPreview() {
 }
 
 function supportsBrowserNotifications() {
-  return typeof window !== "undefined" && "Notification" in window;
+  const runtime = getPwaRuntime();
+  return Boolean(runtime?.platform?.supportsNotifications || (typeof window !== "undefined" && "Notification" in window));
 }
 
 async function ensureBrowserNotificationPermission() {
+  const runtime = getPwaRuntime();
+  if (runtime?.requestNotificationPermission) {
+    return runtime.requestNotificationPermission();
+  }
   if (!supportsBrowserNotifications()) return false;
   if (Notification.permission === "granted") return true;
   if (Notification.permission === "denied") return false;
-
-  if (!state.notificationPermissionPromise) {
-    state.notificationPermissionPromise = Notification.requestPermission()
-      .catch(() => "denied")
-      .finally(() => {
-        state.notificationPermissionPromise = null;
-      });
-  }
-
-  const permission = await state.notificationPermissionPromise;
-  return permission === "granted";
+  return Notification.requestPermission().catch(() => "denied").then((permission) => permission === "granted");
 }
 
 async function sendBrowserNotification(title, body) {
-  const allowed = await ensureBrowserNotificationPermission();
-  if (!allowed) return;
-
+  const runtime = getPwaRuntime();
+  if (runtime?.showNotification) {
+    await runtime.showNotification(title, body, { url: window.location.href });
+    return;
+  }
+  if (!supportsBrowserNotifications() || Notification.permission !== "granted") return;
   try {
     const notification = new Notification(title, {
       body,
       tag: "banana-pro-generate",
       renotify: true,
     });
-
     notification.onclick = () => {
       window.focus();
       notification.close();
@@ -1366,8 +1581,9 @@ function formatDate(isoString) {
   }).format(date);
 }
 
-function renderMeta(entry) {
-  resultMeta.innerHTML = "";
+function renderMetaInto(container, entry) {
+  if (!container) return;
+  container.innerHTML = "";
   if (!entry) return;
 
   const values = [
@@ -1384,55 +1600,33 @@ function renderMeta(entry) {
     const tag = document.createElement("span");
     tag.className = "meta-pill";
     tag.textContent = value;
-    resultMeta.appendChild(tag);
+    container.appendChild(tag);
   });
 }
 
-function renderCurrentResult(entry) {
-  state.currentResult = entry;
-  renderMeta(entry);
+function renderMeta(entry) {
+  resultTargets.forEach(({ meta }) => {
+    renderMetaInto(meta, entry);
+  });
+}
 
-  if (!entry) {
-    clearProgress();
-    resultStage.className = "result-stage empty";
-    resultStage.innerHTML = `
-      <div class="placeholder">
-        <div class="placeholder-icon">▣</div>
-        <h3>准备生成</h3>
-        <p>上传基础图并填写提示词后，就可以开始渲染。</p>
-      </div>
-    `;
-    return;
-  }
-
-  const displayImageUrl = getPreferredImageUrl(entry);
-  resultStage.className = "result-stage";
-  resultStage.innerHTML = `
-    <div class="result-view">
-      <div class="result-image-shell">
-        <img class="result-image-original" src="${displayImageUrl}" alt="生成结果" />
-        <div class="image-transfer-actions">
-          <button type="button" class="image-transfer-button" data-action="send-base">基础图</button>
-          <button type="button" class="image-transfer-button" data-action="send-reference">参考图</button>
-        </div>
-      </div>
-      <div class="result-actions">
-        <div class="result-action-buttons">
-          <button type="button" class="ghost-button" data-action="copy-prompt">复制提示词</button>
-          <button type="button" class="ghost-button" data-action="close-result">关闭</button>
-          <button type="button" class="danger-button" data-action="delete-result">删除</button>
-          <button type="button" class="ghost-button" data-action="download-result">直接下载</button>
-        </div>
-      </div>
+function getEmptyResultMarkup() {
+  return `
+    <div class="placeholder">
+      <div class="placeholder-icon">▣</div>
+      <h3>准备生成</h3>
+      <p>上传基础图并填写提示词后，就可以开始渲染。</p>
     </div>
   `;
+}
 
-  const closeButton = resultStage.querySelector('[data-action="close-result"]');
-  const deleteButton = resultStage.querySelector('[data-action="delete-result"]');
-  const copyPromptButton = resultStage.querySelector('[data-action="copy-prompt"]');
-  const downloadButton = resultStage.querySelector('[data-action="download-result"]');
-  const sendBaseButton = resultStage.querySelector('[data-action="send-base"]');
-  const sendReferenceButton = resultStage.querySelector('[data-action="send-reference"]');
+function bindResultActions(stage, entry) {
+  const closeButton = stage.querySelector('[data-action="close-result"]');
+  const deleteButton = stage.querySelector('[data-action="delete-result"]');
+  const copyPromptButton = stage.querySelector('[data-action="copy-prompt"]');
+  const downloadButton = stage.querySelector('[data-action="download-result"]');
+  const sendBaseButton = stage.querySelector('[data-action="send-base"]');
+  const sendReferenceButton = stage.querySelector('[data-action="send-reference"]');
 
   if (copyPromptButton) {
     copyPromptButton.disabled = !String(entry.prompt || "").trim();
@@ -1473,6 +1667,46 @@ function renderCurrentResult(entry) {
   });
 }
 
+function renderCurrentResult(entry) {
+  state.currentResult = entry;
+  renderMeta(entry);
+
+  if (!entry) {
+    clearProgress();
+    resultTargets.forEach(({ stage }) => {
+      stage.className = "result-stage empty";
+      stage.innerHTML = getEmptyResultMarkup();
+    });
+    return;
+  }
+
+  const displayImageUrl = getPreferredImageUrl(entry);
+  const downloadLabel = getDownloadActionLabel("single");
+  resultTargets.forEach(({ stage }) => {
+    stage.className = "result-stage";
+    stage.innerHTML = `
+      <div class="result-view">
+        <div class="result-image-shell">
+          <img class="result-image-original" src="${displayImageUrl}" alt="生成结果" />
+          <div class="image-transfer-actions">
+            <button type="button" class="image-transfer-button" data-action="send-base">基础图</button>
+            <button type="button" class="image-transfer-button" data-action="send-reference">参考图</button>
+          </div>
+        </div>
+        <div class="result-actions">
+          <div class="result-action-buttons">
+            <button type="button" class="ghost-button" data-action="copy-prompt">复制提示词</button>
+            <button type="button" class="ghost-button" data-action="close-result">关闭</button>
+            <button type="button" class="danger-button" data-action="delete-result">删除</button>
+            <button type="button" class="ghost-button" data-action="download-result">${downloadLabel}</button>
+          </div>
+        </div>
+      </div>
+    `;
+    bindResultActions(stage, entry);
+  });
+}
+
 function clearProgress() {
   if (state.progressTimer) {
     clearInterval(state.progressTimer);
@@ -1499,15 +1733,16 @@ function startProgressSimulation() {
   state.progressValue = 0;
   let stepIndex = 0;
 
-  const fill = resultStage.querySelector(".progress-fill");
-  const label = resultStage.querySelector(".progress-label");
-  const value = resultStage.querySelector(".progress-value");
-
   const applyStep = (step) => {
     state.progressValue = step.value;
-    if (fill) fill.style.width = `${step.value}%`;
-    if (label) label.textContent = step.label;
-    if (value) value.textContent = `${step.value}%`;
+    resultTargets.forEach(({ stage }) => {
+      const fill = stage.querySelector(".progress-fill");
+      const label = stage.querySelector(".progress-label");
+      const value = stage.querySelector(".progress-value");
+      if (fill) fill.style.width = `${step.value}%`;
+      if (label) label.textContent = step.label;
+      if (value) value.textContent = `${step.value}%`;
+    });
   };
 
   applyStep(progressSteps[0]);
@@ -1524,22 +1759,24 @@ function startProgressSimulation() {
 }
 
 function renderLoading() {
-  resultMeta.innerHTML = "";
-  resultStage.className = "result-stage loading";
-  resultStage.innerHTML = "";
+  resultTargets.forEach(({ stage, meta }) => {
+    meta.innerHTML = "";
+    stage.className = "result-stage loading";
+    stage.innerHTML = "";
 
-  const progressNode = progressTemplate.content.firstElementChild.cloneNode(true);
-  resultStage.appendChild(progressNode);
-  resultStage.insertAdjacentHTML(
-    "beforeend",
-    `
-      <div class="placeholder">
-        <div class="placeholder-icon">⟳</div>
-        <h3>正在生成</h3>
-        <p>这是阶段进度，不是上游接口返回的真实百分比，但会更直观一些。</p>
-      </div>
-    `,
-  );
+    const progressNode = progressTemplate.content.firstElementChild.cloneNode(true);
+    stage.appendChild(progressNode);
+    stage.insertAdjacentHTML(
+      "beforeend",
+      `
+        <div class="placeholder">
+          <div class="placeholder-icon">⟳</div>
+          <h3>正在生成</h3>
+          <p>这是阶段进度，不是上游接口返回的真实百分比，但会更直观一些。</p>
+        </div>
+      `,
+    );
+  });
 
   startProgressSimulation();
 }
@@ -1626,6 +1863,7 @@ function buildHistoryNode(entry) {
 
   downloadLink.href = imageUrl;
   downloadLink.download = entry.downloadName || "banana-pro-image";
+  downloadLink.textContent = getDownloadActionLabel("single");
   downloadLink.addEventListener("click", async (event) => {
     event.preventDefault();
     try {
@@ -2003,82 +2241,11 @@ async function optimizePrompt() {
 }
 
 baseInput.addEventListener("change", async () => {
-  const file = baseInput.files && baseInput.files[0];
-  let processedFile = file || null;
-
-  if (file) {
-    try {
-      const result = await compressBaseImageIfNeeded(file);
-      processedFile = result.file;
-      if (result.compressed) {
-        setStatus(
-          `基础结构图已压缩为 JPG，${formatFileSize(file.size)} -> ${formatFileSize(processedFile.size)}。`,
-        );
-      } else {
-        setStatus("");
-      }
-    } catch (error) {
-      processedFile = null;
-      baseInput.value = "";
-      const message = error instanceof Error ? error.message : "基础结构图压缩失败。";
-      setStatus(message, true);
-    }
-  }
-
-  state.baseImageFile = processedFile;
-  if (processedFile) {
-    syncNativeInputFiles(baseInput, [processedFile]);
-  }
-  baseInput.required = !state.baseImageFile;
-  renderBasePreview();
-  syncSubmitButtonState();
+  await applyBaseInputFiles(baseInput.files);
 });
 
 referenceInput.addEventListener("change", async () => {
-  const newFiles = Array.from(referenceInput.files || []);
-  if (newFiles.length === 0) {
-    return;
-  }
-
-  const remainingSlots = Math.max(0, REFERENCE_IMAGE_LIMIT - state.referenceFiles.length);
-  const acceptedFiles = newFiles.slice(0, remainingSlots);
-  const processedFiles = [];
-  let compressedCount = 0;
-  let failedCount = 0;
-
-  for (const file of acceptedFiles) {
-    try {
-      const result = await compressReferenceImageIfNeeded(file);
-      processedFiles.push(result.file);
-      if (result.compressed) {
-        compressedCount += 1;
-      }
-    } catch (error) {
-      failedCount += 1;
-    }
-  }
-
-  state.referenceFiles = [...state.referenceFiles, ...processedFiles];
-  syncNativeInputFiles(referenceInput, state.referenceFiles);
-
-  const messages = [];
-  if (compressedCount > 0) {
-    messages.push(`${compressedCount} 张参考图已压缩到 2MB 以内。`);
-  }
-  if (newFiles.length > remainingSlots) {
-    messages.push(`参考图最多上传 ${REFERENCE_IMAGE_LIMIT} 张，超出的图片已忽略。`);
-  }
-  if (failedCount > 0) {
-    messages.push(`${failedCount} 张参考图压缩失败，已跳过。`);
-  }
-
-  if (failedCount > 0) {
-    setStatus(messages.join(" "), true);
-  } else {
-    setStatus(messages.join(" "));
-  }
-  renderReferencePreview();
-  syncSubmitButtonState();
+  await appendReferenceInputFiles(referenceInput.files);
 });
 
 promptTextarea?.addEventListener("input", () => {
@@ -2188,6 +2355,7 @@ form.addEventListener("submit", async (event) => {
 
     setStatus("生成完成，可以直接下载，也会自动保留到历史记录。");
     playSuccessSound();
+    getPwaRuntime()?.vibrate?.([120, 60, 120]);
     sendBrowserNotification("Banana Pro 图片生成成功", "图片已经生成完成，可以回到页面查看和下载。");
     startTitleFlash("生成成功");
     renderCurrentResult(payload);
@@ -2199,6 +2367,7 @@ form.addEventListener("submit", async (event) => {
     const message = error instanceof Error ? error.message : "生成失败";
     setStatus(message, true);
     playErrorSound();
+    getPwaRuntime()?.vibrate?.([180, 80, 180, 80, 180]);
     sendBrowserNotification("Banana Pro 图片生成失败", message);
     startTitleFlash("生成失败");
     renderCurrentResult(state.currentResult);
@@ -2389,5 +2558,13 @@ window.addEventListener("focus", () => {
     stopTitleFlash();
   }
 });
+
+if (promptTextareaMobile && promptTextarea) {
+  promptTextareaMobile.value = promptTextarea.value;
+}
+bindMirroredRadioGroup("aspectRatio", "aspectRatio-m");
+bindMirroredRadioGroup("imageSize", "imageSize-m");
+bindUploadQuickActions();
+bindUploadDropZones();
 
 bootstrap();

@@ -14,9 +14,16 @@
 - 结果图直接下载
 - 本地保留历史图片和历史记录
 - 历史相册支持批量下载选中图片（优先 OSS，缺失时回退本地）
+- 支持安装为 Web App（PWA），不再维护 iOS / Android 原生客户端
+- 上传、下载、通知会根据桌面 / iPhone / Android 自动切换更合适的 Web 交互方式
 
 ## 最近更新（2026-04）
 
+- 移除 iOS / Android 原生端规划，统一收敛为 Web App / PWA 方案。
+- 新增 `app.webmanifest`、`sw.js` 和安装入口，支持把工作台安装到桌面 / 主屏幕。
+- 上传区新增“相册 / 文件”和“拍照”快捷入口；桌面端继续支持拖拽上传。
+- 单图下载和历史相册批量下载会根据平台自动切换：桌面端优先直接下载，移动端优先系统分享或单个 ZIP。
+- 完成通知改为优先走 Web App / Service Worker 通知，移动端可配合系统震动提醒。
 - 密码登录现在默认保持 `7 天`；服务端会把会话状态写入 `data/sessions.json`，容器重启后仍可继续保持登录。
 - `data/api-platforms.xml` 新增 `defaultModel` 属性，可为每个平台指定前台默认模型。
 - 首页布局做了简洁化重构，字号和按钮密度更紧凑，交互区更聚焦高频操作。
@@ -39,6 +46,22 @@ python3 server.py
 启动后访问：
 
 [http://127.0.0.1:8787](http://127.0.0.1:8787)
+
+## Web App / PWA
+
+当前项目只保留 Web 应用形态，不再维护 `iOS` / `Android` 原生客户端目录。
+
+建议用法：
+
+- `桌面浏览器`：直接打开页面，适合拖拽上传、快速调参和高频下载。
+- `iPhone / iPad`：推荐用 Safari 打开后“添加到主屏幕”，上传、保存和完成提醒会更稳定。
+- `Android`：推荐安装到主屏幕，拍照上传、系统分享和完成通知体验更接近 App。
+
+当前分平台策略：
+
+- `上传`：桌面端支持点击上传和拖拽；移动端提供“相册 / 文件”与“拍照”快捷入口。
+- `下载`：桌面端优先直接下载；移动端单图优先系统分享 / 保存，历史相册批量操作优先打包 ZIP。
+- `通知`：支持浏览器完成通知、标签标题闪动和声音提示；安装为 Web App 后提醒更稳定。
 
 ## 生成图平台配置
 
@@ -244,41 +267,13 @@ docker run -d \
 
 当代码推送到 `main` 分支时，GitHub 会自动构建镜像并推送到 Docker Hub 仓库 `mr926/banana-pro-webui-apiyi`。
 
-## iOS 原生客户端
-
-项目里已经生成了一个新的 iOS 原生客户端工程，位置在：
-
-- [`ios/BananaLab/BananaLab.xcodeproj`](./ios/BananaLab/BananaLab.xcodeproj)
-
-说明：
-
-- 使用 `SwiftUI + MVVM`
-- 目标平台是最新 iOS 版本，并且支持 iPad
-- 默认服务器地址和会话恢复都已接好
-- 图片选择走相册，历史图支持 OSS 优先加载与下载
-- 生成成功/失败会触发系统通知
-
-打包测试时，用 Xcode 打开这个工程，选择对应的 `iPhone` 或 `iPad` 设备/模拟器后直接运行即可。如果要在真机上安装测试包，再去 Xcode 里补签名团队和证书。
-
-## Android 原生版
-
-原生 Android 工程已经开始放在：
-
-- `android/BananaLab`
-
-它会继续沿用当前后端接口，目标是做成 `BananaLab` 原生 App。
-
-使用前需要先在 GitHub 仓库的 `Settings -> Secrets and variables -> Actions` 中添加：
-
-- `DOCKERHUB_USERNAME`: 你的 Docker Hub 用户名
-- `DOCKERHUB_TOKEN`: 你的 Docker Hub Access Token
-
-添加完成后，只要向 `main` 推送代码，或在 GitHub Actions 页面手动触发该工作流，就会自动发布镜像。
-
 ## 目录说明
 
 - `server.py`: 本地服务和 API 代理
 - `public/`: 前端页面
+- `public/app.webmanifest`: Web App / PWA 清单
+- `public/sw.js`: Service Worker，负责壳资源缓存和通知点击回流
+- `public/pwa.js`: Web App 运行时，处理安装、平台识别、通知和下载策略
 - `data/generated/`: 生成后的图片文件
 - `data/history.json`: 历史记录
 - `data/prompt-library.md`: 提示词列表，一行一条

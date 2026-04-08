@@ -1,5 +1,4 @@
 import base64
-import cgi
 import hashlib
 import hmac
 import io
@@ -18,6 +17,8 @@ import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 from datetime import datetime
+from email.parser import BytesParser
+from email.policy import default as email_policy_default
 from email.utils import formatdate
 from http import client as http_client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -29,6 +30,8 @@ try:
     from PIL import Image
 except Exception:
     Image = None
+
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -2305,39 +2308,51 @@ class AppHandler(BaseHTTPRequestHandler):
             json_response(self, 400, {"error": "请求必须为 multipart/form-data。"})
             return None
 
-        environ = {
-            "REQUEST_METHOD": "POST",
-            "CONTENT_TYPE": content_type,
-        }
         try:
-            form = cgi.FieldStorage(
-                fp=self.rfile,
-                headers=self.headers,
-                environ=environ,
+            content_length = int(self.headers.get("Content-Length", "0") or "0")
+        except ValueError:
+            json_response(self, 400, {"error": "请求体长度不正确。"})
+            return None
+
+        if content_length <= 0:
+            json_response(self, 400, {"error": "请求体为空。"})
+            return None
+
+        try:
+            raw_body = self.rfile.read(content_length)
+            message = BytesParser(policy=email_policy_default).parsebytes(
+                f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8") + raw_body
             )
         except Exception as exc:
             json_response(self, 400, {"error": f"解析表单失败：{exc}"})
             return None
 
         data: dict = {}
-        for key in form.keys():
-            field = form[key]
-            if isinstance(field, list):
-                values = [self.normalize_field(item) for item in field]
-                data[key] = [item for item in values if item is not None]
+        for field in message.iter_parts():
+            key = str(field.get_param("name", header="content-disposition") or "").strip()
+            if not key:
+                continue
+            normalized = self.normalize_field(field)
+            if normalized is None:
+                continue
+            if key in data:
+                existing = data[key]
+                if isinstance(existing, list):
+                    existing.append(normalized)
+                else:
+                    data[key] = [existing, normalized]
             else:
-                normalized = self.normalize_field(field)
-                if normalized is not None:
-                    data[key] = normalized
+                data[key] = normalized
         return data
 
     def normalize_field(self, field) -> Optional[object]:
-        if getattr(field, "filename", None):
-            raw = field.file.read()
+        filename = field.get_filename()
+        if filename:
+            raw = field.get_payload(decode=True) or b""
             if not raw:
                 return None
-            filename = safe_name(field.filename)
-            mime_type = infer_mime_type(filename, field.type, raw)
+            filename = safe_name(filename)
+            mime_type = infer_mime_type(filename, field.get_content_type(), raw)
             return {
                 "filename": filename,
                 "mime_type": mime_type,
@@ -2345,7 +2360,12 @@ class AppHandler(BaseHTTPRequestHandler):
                 "base64": base64.b64encode(raw).decode("utf-8"),
                 "sha256": hashlib.sha256(raw).hexdigest(),
             }
-        value = field.value
+        raw = field.get_payload(decode=True) or b""
+        charset = field.get_content_charset() or "utf-8"
+        try:
+            value = raw.decode(charset)
+        except Exception:
+            value = raw.decode("utf-8", errors="replace")
         return value if value != "" else None
 
     def log_message(self, fmt: str, *args) -> None:

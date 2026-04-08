@@ -309,9 +309,64 @@ body { padding-top: 48px; }
 .param-section-hint { font-size: 11px; color: var(--text-tertiary); margin: -2px 0 0; }
 .param-section-hint.is-error { color: var(--danger); }
 
+.platform-handoff {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 12px;
+  margin-bottom: 8px;
+}
+
+.platform-handoff-copy {
+  min-width: 0;
+}
+
+.platform-handoff-copy strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.platform-handoff-copy p {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.platform-handoff-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 /* ══════════════════════════════════════════════════════
    UPLOAD ZONE
    ══════════════════════════════════════════════════════ */
+
+.upload-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.upload-quick-actions.compact {
+  margin-bottom: 2px;
+}
+
+.upload-quick-button {
+  min-height: 30px;
+  padding-inline: 10px;
+}
+
+.upload-quick-hint {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
 
 .upload-zone {
   position: relative;
@@ -331,6 +386,12 @@ body { padding-top: 48px; }
 .upload-zone:hover {
   border-color: var(--border-focus);
   background: var(--surface-raised);
+}
+
+.upload-zone.is-dragover {
+  border-color: var(--text-primary);
+  background: color-mix(in srgb, var(--surface-raised) 58%, white);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 18%, transparent);
 }
 
 .upload-zone input {
@@ -358,6 +419,10 @@ body { padding-top: 48px; }
 .upload-zone-label {
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+html[data-platform="desktop"] .upload-quick-button[data-upload-mode="camera"] {
+  display: none;
 }
 
 /* Thumb grid */
@@ -1327,6 +1392,10 @@ textarea { max-height: 180px; }
 
 .album-selection-status { margin: 0 0 10px; font-size: 11px; color: var(--text-secondary); }
 
+.album-shell .platform-handoff {
+  margin-bottom: 10px;
+}
+
 .album-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -1525,6 +1594,20 @@ button:focus-visible, .ghost-button:focus-visible,
 
   .mobile-panel-params .param-section + .param-section { margin-top: 6px; }
 
+  .platform-handoff {
+    grid-template-columns: 1fr;
+    padding: 10px;
+  }
+
+  .platform-handoff-actions {
+    justify-content: stretch;
+  }
+
+  .platform-handoff-actions .ghost-button,
+  .platform-handoff-actions .primary-button {
+    flex: 1 1 140px;
+  }
+
   /* Submit button — sits just above the tab bar */
   #submit-button {
     left: 0;
@@ -1563,6 +1646,9 @@ button:focus-visible, .ghost-button:focus-visible,
   #aspect-ratio-group { grid-template-columns: repeat(4, 1fr); }
   .thumb-grid { grid-template-columns: repeat(2, 1fr); }
   .prompt-toolbar { flex-direction: column; align-items: stretch; }
+  .upload-quick-actions { align-items: stretch; }
+  .upload-quick-button { flex: 1 1 120px; min-height: 34px; }
+  .upload-quick-hint { width: 100%; }
   .modal-two-column { grid-template-columns: 1fr; }
   .album-grid { grid-template-columns: 1fr 1fr; }
 }
