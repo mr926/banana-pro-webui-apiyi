@@ -1260,17 +1260,17 @@ def resolve_image_generation_api_url(api_url: str, image_model: str) -> str:
 
 def build_prompt(user_prompt: str, reference_count: int) -> str:
     base = (
-        "你将收到一张基础结构图作为主要约束，它的图片编号固定为 BASE。"
-        "请严格保留 BASE 对应图片中的主体构图、空间关系和关键结构。"
+        "你将收到一张基础结构图作为主要约束，它的图片编号固定为 ##BASE##。"
+        "请严格保留 ##BASE## 对应图片中的主体构图、空间关系和关键结构。"
     )
     if reference_count > 0:
         base += (
-            f"另外还会提供 {reference_count} 张参考图，它们会按上传顺序编号为 REF1 到 REF{reference_count}。"
+            f"另外还会提供 {reference_count} 张参考图，它们会按上传顺序编号为 ##REF1## 到 ##REF{reference_count}##。"
             "这些参考图只用于借鉴风格、材质、灯光、色彩和氛围，不要直接复制参考图中的具体主体内容。"
         )
     else:
         base += "没有提供风格参考图时，请根据提示词自行补足材质、光线与氛围。"
-    base += "如果用户提示词里提到 BASE、REF1、REF2 等编号，请严格按这些编号去对应图片。"
+    base += "如果用户提示词里提到 ##BASE##、##REF1##、##REF2## 等编号，请严格按这些编号去对应图片。"
 
     if user_prompt.strip():
         base += f"\n\n用户提示词：{user_prompt.strip()}"
@@ -1289,7 +1289,7 @@ def build_payload(
 ) -> dict:
     parts = [
         {"text": build_prompt(prompt, len(reference_images))},
-        {"text": "图片编号 BASE。这张图是基础结构图，请以它为核心，并严格保留它的主体结构。"},
+        {"text": "图片编号 ##BASE##。这张图是基础结构图，请以它为核心，并严格保留它的主体结构。"},
         {
             "inlineData": {
                 "mimeType": base_image["mime_type"],
@@ -1300,7 +1300,7 @@ def build_payload(
 
     for index, image in enumerate(reference_images, start=1):
         parts.append(
-            {"text": f"图片编号 REF{index}。这是一张参考图，仅用于风格、材质、灯光、色彩和氛围参考。"},
+            {"text": f"图片编号 ##REF{index}##。这是一张参考图，仅用于风格、材质、灯光、色彩和氛围参考。"},
         )
         parts.append(
             {
@@ -1598,7 +1598,7 @@ def build_prompt_optimizer_payload(user_prompt: str, persona_content: str, model
                 "text": (
                     "请结合这张基础结构图，把以下中文需求转译成适合 nano banana pro 模型生成图片使用的英文提示词。"
                     "需要明确保留基础图中的主体构图、空间关系和关键结构。"
-                    "如果用户需求里出现 BASE、REF1、REF2 这类图片编号，请在英文提示词里原样保留这些编号，不要翻译、不要改写。"
+                    "如果用户需求里出现 ##BASE##、##REF1##、##REF2## 这类图片编号，请在英文提示词里原样保留这些编号，不要翻译、不要改写，也不要去掉 ##。"
                     "只输出最终英文提示词，不要解释。\n\n"
                     f"用户需求：{source_text}"
                 ),
@@ -1613,7 +1613,7 @@ def build_prompt_optimizer_payload(user_prompt: str, persona_content: str, model
     else:
         user_content = (
             "请把以下内容转译成适合 nano banana pro 模型生成图片使用的英文提示词。"
-            "如果内容里出现 BASE、REF1、REF2 这类图片编号，请在英文提示词里原样保留这些编号，不要翻译、不要改写。\n\n"
+            "如果内容里出现 ##BASE##、##REF1##、##REF2## 这类图片编号，请在英文提示词里原样保留这些编号，不要翻译、不要改写，也不要去掉 ##。\n\n"
             f"用户需求：{source_text}"
         )
 

@@ -1150,7 +1150,7 @@ function insertTextIntoPromptAtCursor(text) {
 }
 
 function getImageReferenceToken(kind, index) {
-  return kind === "base" ? "BASE" : `REF${index + 1}`;
+  return kind === "base" ? "##BASE##" : `##REF${index + 1}##`;
 }
 
 function setModalVisible(modal, visible) {
