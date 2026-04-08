@@ -15,8 +15,10 @@
 - 本地保留历史图片和历史记录
 - 历史相册支持批量下载选中图片（优先 OSS，缺失时回退本地）
 
-## 最近更新（2026-03）
+## 最近更新（2026-04）
 
+- 密码登录现在默认保持 `7 天`；服务端会把会话状态写入 `data/sessions.json`，容器重启后仍可继续保持登录。
+- `data/api-platforms.xml` 新增 `defaultModel` 属性，可为每个平台指定前台默认模型。
 - 首页布局做了简洁化重构，字号和按钮密度更紧凑，交互区更聚焦高频操作。
 - 首页“开始生成”按钮固定在左下角，不随滚动移动。
 - 首页“当前结果”和“历史图片”不再直接展示完整提示词，改为通过按钮复制完整提示词，界面更干净。
@@ -42,22 +44,24 @@ python3 server.py
 
 生成图相关的 `BANANA_PRO_API_URL`、`BANANA_PRO_IMAGE_MODEL` 和 `BANANA_PRO_API_KEY` 已独立到 [data/api-platforms.xml](./data/api-platforms.xml)。
 
-一个平台对应一个 `url` 和一个 `key`，`models` 里可以用符号分隔多个模型；前台会在“图生图工作台”标题下自动显示“API 平台”和“生成模型”两个选择器。
+一个平台对应一个 `url` 和一个 `key`，`models` 里可以用符号分隔多个模型；前台会在“图生图工作台”标题下自动显示“API 平台”和“生成模型”两个选择器。可选的 `defaultModel` 用来指定该平台在前台默认选中的模型。
 
 默认示例：
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
 <apiPlatforms version="1">
-  <platform id="apiyi" name="APIYI" default="true">
+  <platform id="apiyi" name="APIYI" default="true" defaultModel="gemini-3-pro-image-preview">
     <url>https://api.apiyi.com/v1beta/models/{model}:generateContent</url>
     <key></key>
-    <models separator="|">gemini-3-pro-image-preview|gemini-2.5-flash-image</models>
+    <models separator="|">gemini-3-pro-image-preview|gemini-3.1-flash-image-preview-4k</models>
   </platform>
 </apiPlatforms>
 ```
 
 如果你有多个 API 平台，直接复制一个 `<platform>` 节点即可。
+如果设置了 `defaultModel` 且它存在于 `models` 列表中，前台会优先选中它；未设置或不匹配时会回退到 `models` 的第一项。
+如果仓库是公开的，建议提交前保持 `<key></key>` 为空，把真实 key 放在本地 `.env` / `.env.docker` 中。
 
 ## 环境变量
 
@@ -80,6 +84,7 @@ python3 server.py
 也可以直接通过环境变量传入，环境变量优先级高于 `.env`。
 
 如果设置了 `BANANA_PRO_UI_PASSWORD`，页面会先要求输入访问密码；不设置则保持无密码访问。
+登录成功后会默认保持 `7 天`；服务端会把会话状态保存到 `data/sessions.json`，该文件属于运行时数据，不建议提交到仓库。
 如果设置了 `BANANA_PRO_LLM_API_KEY`，AI 翻译优化会优先使用它；未设置时会回退到默认图片平台的 key，兼容旧版时也会继续回退到 `BANANA_PRO_API_KEY`。
 `BANANA_PRO_LLM_API_URL` 用于单独配置提示词优化所使用的 LLM 接口地址，默认值为 `https://api.apiyi.com/v1/chat/completions`。
 `BANANA_PRO_LLM_MODEL` 用于单独配置提示词优化所使用的模型名，默认值为 `gpt-5.4`。
@@ -90,6 +95,8 @@ python3 server.py
 ```bash
 cp .env.example .env
 ```
+
+建议把真实 key 只保留在你本地 `.env` / `.env.docker` 中，仓库里的示例文件保持空值。
 
 默认示例内容如下：
 
@@ -198,7 +205,7 @@ docker compose up -d --build
 cp .env.docker.example .env.docker
 ```
 
-然后把 `.env.docker` 里的 `BANANA_PRO_LLM_API_KEY`、`BANANA_PRO_LLM_API_URL` 和 `BANANA_PRO_LLM_MODEL` 按需改成你自己的；如果不需要访问密码，可以保持 `BANANA_PRO_UI_PASSWORD=` 为空。图片生成平台仍然直接改 `data/api-platforms.xml`。再启动：
+然后把 `.env.docker` 里的 `BANANA_PRO_LLM_API_KEY`、`BANANA_PRO_LLM_API_URL` 和 `BANANA_PRO_LLM_MODEL` 按需改成你自己的；如果不需要访问密码，可以保持 `BANANA_PRO_UI_PASSWORD=` 为空。图片生成平台仍然直接改 `data/api-platforms.xml`。`.env.docker` 建议只作为本地私有文件使用，不要提交到仓库。再启动：
 
 ```bash
 docker compose --env-file .env.docker up -d --build

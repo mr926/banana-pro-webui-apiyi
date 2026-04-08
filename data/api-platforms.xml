@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <apiPlatforms version="1">
+  <!-- 提交到公开仓库前建议保持 <key></key> 为空；运行时会自动回退到本地环境变量中的 BANANA_PRO_API_KEY。 -->
   <platform id="apiyi" name="APIYI" default="true" defaultModel="gemini-3-pro-image-preview">
     <url>https://api.apiyi.com/v1beta/models/{model}:generateContent</url>
     <key></key>
