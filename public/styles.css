@@ -775,8 +775,13 @@ textarea { max-height: 180px; }
   color: var(--text-tertiary);
 }
 
+.mobile-submit-bar {
+  display: none;
+}
+
 /* Submit button — sticky at panel bottom */
-#submit-button {
+#submit-button,
+#submit-button-mobile {
   position: fixed;
   left: max(12px, calc((100vw - 1440px) / 2 + 12px));
   bottom: max(12px, env(safe-area-inset-bottom));
@@ -1540,7 +1545,8 @@ button:focus-visible, .ghost-button:focus-visible,
 
   .result-panel { flex-direction: column; }
 
-  #submit-button {
+  #submit-button,
+  #submit-button-mobile {
     left: 0;
     bottom: max(12px, env(safe-area-inset-bottom));
     width: 300px;
@@ -1582,7 +1588,7 @@ button:focus-visible, .ghost-button:focus-visible,
   .mobile-panel-history {
     display: none;
     padding: 10px;
-    padding-bottom: calc(50px + env(safe-area-inset-bottom, 0px) + 56px);
+    padding-bottom: calc(50px + env(safe-area-inset-bottom, 0px) + 112px);
     min-height: calc(100vh - 48px - 50px);
   }
 
@@ -1608,17 +1614,42 @@ button:focus-visible, .ghost-button:focus-visible,
     flex: 1 1 140px;
   }
 
-  /* Submit button — sits just above the tab bar */
   #submit-button {
+    display: none;
+  }
+
+  .mobile-submit-bar {
+    position: fixed;
     left: 0;
     right: 0;
     bottom: calc(50px + env(safe-area-inset-bottom, 0px));
-    width: 100%;
-    border-radius: 0;
-    min-height: 48px;
-    font-size: 14px;
-    box-shadow: none;
+    z-index: 34;
+    display: grid;
+    gap: 6px;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
     border-top: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface) 94%, white 6%);
+    backdrop-filter: blur(12px);
+    box-shadow: 0 -10px 24px rgba(15, 23, 42, 0.08);
+  }
+
+  .mobile-submit-bar .form-status {
+    margin: 0;
+    min-height: 16px;
+    padding: 0 2px;
+    text-align: left;
+  }
+
+  #submit-button-mobile {
+    position: static;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    width: 100%;
+    min-height: 46px;
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-float);
+    font-size: 14px;
   }
 
   /* Result panel mobile */

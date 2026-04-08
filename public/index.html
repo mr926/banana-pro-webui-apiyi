@@ -86,7 +86,7 @@
                 <span class="upload-quick-hint">桌面支持拖拽文件，手机可直接调起相机。</span>
               </div>
               <label class="upload-zone" data-upload-zone="base" for="base-image" aria-label="上传基础图">
-                <input id="base-image" name="baseImage" type="file" accept="image/*" required />
+                <input id="base-image" name="baseImage" type="file" accept="image/*,.heic,.heif,.heics,.heifs" required />
                 <span class="upload-zone-icon">+</span>
                 <span class="upload-zone-label">点击上传或拖拽基础图（必填）</span>
               </label>
@@ -115,7 +115,7 @@
                 <span class="upload-quick-hint">移动端单次拍照追加 1 张，桌面可多选或拖拽。</span>
               </div>
               <label class="upload-zone" data-upload-zone="reference" for="reference-images" aria-label="上传参考图">
-                <input id="reference-images" name="referenceImages" type="file" accept="image/*" multiple />
+                <input id="reference-images" name="referenceImages" type="file" accept="image/*,.heic,.heif,.heics,.heifs" multiple />
                 <span class="upload-zone-icon">+</span>
                 <span class="upload-zone-label">点击上传或拖拽参考图（可选）</span>
               </label>
@@ -457,6 +457,11 @@
               </div>
             </div>
           </section>
+
+          <div class="mobile-submit-bar">
+            <p id="form-status-mobile" class="form-status"></p>
+            <button type="submit" id="submit-button-mobile" class="primary-button">开始生成</button>
+          </div>
 
         </form>
       </div>

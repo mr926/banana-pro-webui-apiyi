@@ -10,6 +10,7 @@ import secrets
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -27,9 +28,10 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlparse, urlunparse
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageOps
 except Exception:
     Image = None
+    ImageOps = None
 
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 
@@ -787,6 +789,75 @@ def build_thumbnail(source_path: Path, thumb_path: Path) -> None:
         )
 
 
+def render_image_as_rgb(image) -> "Image.Image":
+    source = ImageOps.exif_transpose(image) if ImageOps is not None else image
+    if source.mode in ("RGBA", "LA") or (source.mode == "P" and "transparency" in source.info):
+        alpha = source.convert("RGBA")
+        background = Image.new("RGB", alpha.size, (255, 255, 255))
+        background.paste(alpha, mask=alpha.getchannel("A"))
+        return background
+    return source.convert("RGB")
+
+
+def convert_image_with_pillow_to_jpeg(data: bytes) -> bytes:
+    if Image is None:
+        raise RuntimeError("缺少 Pillow 依赖，无法转换图片。")
+
+    output = io.BytesIO()
+    with Image.open(io.BytesIO(data)) as image:
+        rgb = render_image_as_rgb(image)
+        rgb.save(
+            output,
+            format="JPEG",
+            quality=90,
+            optimize=True,
+            progressive=True,
+        )
+    return output.getvalue()
+
+
+def convert_image_with_sips_to_jpeg(data: bytes, filename: str, mime_type: str) -> bytes:
+    if sys.platform != "darwin":
+        raise RuntimeError("当前环境不支持 sips 转换。")
+
+    suffix = Path(filename or "upload-image").suffix or mimetypes.guess_extension(mime_type or "") or ".img"
+    stem = Path(filename or "upload-image").stem or "upload-image"
+    with tempfile.TemporaryDirectory(prefix="banana-pro-image-") as temp_dir:
+        source_path = Path(temp_dir) / f"{safe_name(stem)}{suffix}"
+        output_path = Path(temp_dir) / f"{safe_name(stem)}.jpg"
+        source_path.write_bytes(data)
+        try:
+            subprocess.run(
+                ["sips", "-s", "format", "jpeg", str(source_path), "--out", str(output_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except (OSError, subprocess.CalledProcessError) as exc:
+            stderr = ""
+            if isinstance(exc, subprocess.CalledProcessError):
+                stderr = (exc.stderr or "").strip()
+            raise RuntimeError(stderr or "sips 图片转换失败。") from exc
+        return output_path.read_bytes()
+
+
+def convert_uploaded_image_to_jpeg(data: bytes, filename: str, mime_type: str) -> bytes:
+    errors: List[str] = []
+
+    try:
+        return convert_image_with_pillow_to_jpeg(data)
+    except Exception as exc:
+        errors.append(str(exc))
+
+    try:
+        return convert_image_with_sips_to_jpeg(data, filename, mime_type)
+    except Exception as exc:
+        errors.append(str(exc))
+
+    details = "；".join(message for message in errors if message) or "未找到可用的图片转换器。"
+    raise RuntimeError(details)
+
+
 def ensure_thumbnail_for_history_entry(entry: dict) -> Tuple[dict, bool]:
     if not isinstance(entry, dict):
         return entry, False
@@ -918,6 +989,23 @@ def json_response(
         handler.send_header(key, value)
     handler.end_headers()
     handler.wfile.write(body)
+
+
+def binary_response(
+    handler: BaseHTTPRequestHandler,
+    status: int,
+    body: bytes,
+    content_type: str,
+    extra_headers: Optional[List[Tuple[str, str]]] = None,
+) -> None:
+    payload = body or b""
+    handler.send_response(status)
+    handler.send_header("Content-Type", content_type)
+    handler.send_header("Content-Length", str(len(payload)))
+    for key, value in extra_headers or []:
+        handler.send_header(key, value)
+    handler.end_headers()
+    handler.wfile.write(payload)
 
 
 def parse_cookie_header(raw_cookie: str) -> Dict[str, str]:
@@ -1631,6 +1719,11 @@ class AppHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/auth/logout":
             return self.handle_logout()
 
+        if parsed.path == "/api/prepare-image":
+            if password_enabled() and not self.ensure_authenticated():
+                return
+            return self.handle_prepare_image()
+
         if parsed.path == "/api/history/download-zip":
             if not self.ensure_authenticated():
                 return
@@ -1767,6 +1860,43 @@ class AppHandler(BaseHTTPRequestHandler):
             200,
             {"ok": True, "authenticated": False},
             extra_headers=[("Set-Cookie", f"{SESSION_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax")],
+        )
+
+    def handle_prepare_image(self) -> None:
+        form = self.parse_multipart_form()
+        if form is None:
+            return
+
+        upload = form.get("image")
+        if not isinstance(upload, dict):
+            return json_response(self, 400, {"error": "缺少待处理的图片文件。"})
+
+        try:
+            converted = convert_uploaded_image_to_jpeg(
+                upload["data"],
+                str(upload.get("filename", "upload-image")),
+                str(upload.get("mime_type", "")),
+            )
+        except Exception as exc:
+            return json_response(
+                self,
+                415,
+                {
+                    "error": "当前图片格式无法直接预览，也没能自动转换成 JPG。",
+                    "details": str(exc),
+                },
+            )
+
+        download_name = f"{Path(str(upload.get('filename', 'upload-image'))).stem or 'upload-image'}.jpg"
+        return binary_response(
+            self,
+            200,
+            converted,
+            "image/jpeg",
+            extra_headers=[
+                ("Content-Disposition", f"inline; filename*=UTF-8''{quote(download_name)}"),
+                ("Cache-Control", "no-store"),
+            ],
         )
 
     def handle_generate(self) -> None:

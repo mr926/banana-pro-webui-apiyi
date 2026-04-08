@@ -6,7 +6,9 @@ const referencePreview = document.getElementById("reference-preview");
 const basePreviewMobile = document.getElementById("base-preview-m");
 const referencePreviewMobile = document.getElementById("reference-preview-m");
 const submitButton = document.getElementById("submit-button");
+const submitButtonMobile = document.getElementById("submit-button-mobile");
 const formStatus = document.getElementById("form-status");
+const formStatusMobile = document.getElementById("form-status-mobile");
 const resultStage = document.getElementById("result-stage");
 const resultMeta = document.getElementById("result-meta");
 const resultStageMobile = document.getElementById("result-stage-mobile");
@@ -121,8 +123,13 @@ const REFERENCE_IMAGE_LIMIT = 6;
 const HISTORY_PAGE_SIZE = 10;
 const IMAGE_TRANSFER_QUEUE_KEY = "banana-pro-image-transfer-queue";
 const DEFAULT_PAGE_TITLE = document.title;
+const SAFE_PREVIEW_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"]);
+const FORCE_JPEG_EXTENSIONS = new Set(["heic", "heif", "heics", "heifs", "bmp", "dib", "tif", "tiff"]);
+const FORCE_JPEG_MIME_KEYWORDS = ["heic", "heif", "tiff", "bmp"];
 const basePreviewTargets = [basePreview, basePreviewMobile].filter(Boolean);
 const referencePreviewTargets = [referencePreview, referencePreviewMobile].filter(Boolean);
+const submitButtons = [submitButton, submitButtonMobile].filter(Boolean);
+const formStatusNodes = [formStatus, formStatusMobile].filter(Boolean);
 const resultTargets = [
   { stage: resultStage, meta: resultMeta },
   { stage: resultStageMobile, meta: resultMetaMobile },
@@ -147,6 +154,18 @@ function syncNativeInputFiles(input, files) {
   const dt = new DataTransfer();
   files.forEach((file) => dt.items.add(file));
   input.files = dt.files;
+}
+
+function setSubmitButtonsDisabled(disabled) {
+  submitButtons.forEach((button) => {
+    button.disabled = Boolean(disabled);
+  });
+}
+
+function setSubmitButtonLabel(label = "开始生成") {
+  submitButtons.forEach((button) => {
+    button.textContent = label;
+  });
 }
 
 function formatFileSize(bytes) {
@@ -274,6 +293,15 @@ function extFromMimeType(type) {
   return "jpg";
 }
 
+function normalizeMimeType(type) {
+  return String(type || "").split(";", 1)[0].trim().toLowerCase();
+}
+
+function getFileExtension(name) {
+  const match = String(name || "").trim().match(/\.([a-z0-9]{2,8})$/i);
+  return match?.[1]?.toLowerCase() || "";
+}
+
 function ensureImageFileName(name, mimeType, fallback = "history-image") {
   const safe = String(name || fallback)
     .trim()
@@ -281,6 +309,36 @@ function ensureImageFileName(name, mimeType, fallback = "history-image") {
   const stem = safe.replace(/\.[a-z0-9]{2,6}$/i, "") || fallback;
   const ext = /\.[a-z0-9]{2,6}$/i.test(safe) ? safe.match(/\.([a-z0-9]{2,6})$/i)?.[1] : extFromMimeType(mimeType);
   return `${stem}.${ext || "jpg"}`;
+}
+
+function shouldConvertUploadToJpeg(file) {
+  const mimeType = normalizeMimeType(file?.type);
+  const extension = getFileExtension(file?.name);
+  if (FORCE_JPEG_EXTENSIONS.has(extension)) {
+    return true;
+  }
+  if (FORCE_JPEG_MIME_KEYWORDS.some((keyword) => mimeType.includes(keyword))) {
+    return true;
+  }
+  if (mimeType.startsWith("image/") && !SAFE_PREVIEW_MIME_TYPES.has(mimeType)) {
+    return true;
+  }
+  return false;
+}
+
+function parseFilenameFromDisposition(disposition, fallback = "image.jpg") {
+  const raw = String(disposition || "");
+  const utf8Match = raw.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch (error) {
+      return utf8Match[1];
+    }
+  }
+
+  const asciiMatch = raw.match(/filename="?([^"]+)"?/i);
+  return asciiMatch?.[1] || fallback;
 }
 
 function getPreferredImageUrl(entry) {
@@ -429,6 +487,15 @@ function readImageFile(file) {
   });
 }
 
+async function canPreviewImageFile(file) {
+  try {
+    await readImageFile(file);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 function canvasToBlob(canvas, type, quality) {
   return new Promise((resolve, reject) => {
     canvas.toBlob(
@@ -474,6 +541,57 @@ async function renderCompressedFile(file, options) {
   });
 }
 
+async function convertImageViaServer(file) {
+  const formData = new FormData();
+  formData.set("image", file, file.name || "upload-image");
+
+  const response = await fetch("/api/prepare-image", {
+    method: "POST",
+    body: formData,
+  });
+  if (response.status === 401) {
+    throw new Error("请先登录后再上传图片。");
+  }
+  if (!response.ok) {
+    const payload = await readJsonSafely(response);
+    throw new Error(getPayloadErrorMessage(payload, "图片转换失败，请换一张图片再试。"));
+  }
+
+  const blob = await response.blob();
+  const filename = parseFilenameFromDisposition(
+    response.headers.get("Content-Disposition"),
+    renameFileToJpg(file.name || "upload-image"),
+  );
+  return new File([blob], filename, {
+    type: blob.type || "image/jpeg",
+    lastModified: Date.now(),
+  });
+}
+
+async function preparePreviewableImageFile(file) {
+  if (!file) {
+    return { file: null, converted: false, method: null };
+  }
+
+  const previewable = await canPreviewImageFile(file);
+  const needsJpeg = shouldConvertUploadToJpeg(file);
+  if (!needsJpeg && previewable) {
+    return { file, converted: false, method: null };
+  }
+
+  if (previewable) {
+    const convertedFile = await renderCompressedFile(file, {
+      quality: 0.92,
+      type: "image/jpeg",
+      fileName: renameFileToJpg(file.name),
+    });
+    return { file: convertedFile, converted: true, method: "client" };
+  }
+
+  const convertedFile = await convertImageViaServer(file);
+  return { file: convertedFile, converted: true, method: "server" };
+}
+
 async function compressBaseImageIfNeeded(file) {
   if (file.size <= BASE_IMAGE_MAX_BYTES) {
     return { file, compressed: false };
@@ -517,20 +635,24 @@ async function applyBaseInputFiles(files) {
   const file = incomingFiles[0] || null;
   let processedFile = file;
   const ignoredCount = Math.max(0, incomingFiles.length - 1);
+  let prepared = { converted: false, method: null };
 
   if (file) {
     try {
-      const result = await compressBaseImageIfNeeded(file);
+      prepared = await preparePreviewableImageFile(file);
+      const result = await compressBaseImageIfNeeded(prepared.file);
       processedFile = result.file;
-      if (result.compressed) {
-        setStatus(
-          `基础结构图已压缩为 JPG，${formatFileSize(file.size)} -> ${formatFileSize(processedFile.size)}。${ignoredCount > 0 ? ` 另有 ${ignoredCount} 个文件已忽略。` : ""}`,
-        );
-      } else if (ignoredCount > 0) {
-        setStatus(`基础结构图已更新，另有 ${ignoredCount} 个文件已忽略。`);
-      } else {
-        setStatus("");
+      const messages = [];
+      if (prepared.converted) {
+        messages.push(prepared.method === "server" ? "基础结构图已自动转换为 JPG（兼容转换）。" : "基础结构图已自动转换为 JPG。");
       }
+      if (result.compressed) {
+        messages.push(`已压缩 ${formatFileSize(file.size)} -> ${formatFileSize(processedFile.size)}。`);
+      }
+      if (ignoredCount > 0) {
+        messages.push(`另有 ${ignoredCount} 个文件已忽略。`);
+      }
+      setStatus(messages.join(" "));
     } catch (error) {
       processedFile = null;
       baseInput.value = "";
@@ -558,12 +680,21 @@ async function appendReferenceInputFiles(files) {
   const acceptedFiles = newFiles.slice(0, remainingSlots);
   const processedFiles = [];
   let compressedCount = 0;
+  let convertedCount = 0;
+  let serverConvertedCount = 0;
   let failedCount = 0;
 
   for (const file of acceptedFiles) {
     try {
-      const result = await compressReferenceImageIfNeeded(file);
+      const prepared = await preparePreviewableImageFile(file);
+      const result = await compressReferenceImageIfNeeded(prepared.file);
       processedFiles.push(result.file);
+      if (prepared.converted) {
+        convertedCount += 1;
+        if (prepared.method === "server") {
+          serverConvertedCount += 1;
+        }
+      }
       if (result.compressed) {
         compressedCount += 1;
       }
@@ -576,6 +707,11 @@ async function appendReferenceInputFiles(files) {
   syncNativeInputFiles(referenceInput, state.referenceFiles);
 
   const messages = [];
+  if (convertedCount > 0) {
+    messages.push(
+      `${convertedCount} 张参考图已自动转换为 JPG${serverConvertedCount > 0 ? `（其中 ${serverConvertedCount} 张走兼容转换）` : ""}。`,
+    );
+  }
   if (compressedCount > 0) {
     messages.push(`${compressedCount} 张参考图已压缩到 2MB 以内。`);
   }
@@ -864,8 +1000,10 @@ async function applyPendingImageTransfers() {
 }
 
 function setStatus(message, isError = false) {
-  formStatus.textContent = message || "";
-  formStatus.style.color = isError ? "#d14343" : "";
+  formStatusNodes.forEach((node) => {
+    node.textContent = message || "";
+    node.style.color = isError ? "#d14343" : "";
+  });
 }
 
 function setOptimizeStatus(message, isError = false) {
@@ -1370,7 +1508,7 @@ function hasSourcePrompt() {
 }
 
 function syncSubmitButtonState() {
-  if (!submitButton) return;
+  if (!submitButtons.length) return;
   if (state.progressTimer) return;
 
   const promptMode = getPromptMode();
@@ -1379,7 +1517,8 @@ function syncSubmitButtonState() {
     hasImageTarget &&
     state.baseImageFile &&
     (promptMode === "optimized" ? hasOptimizedPrompt() : hasSourcePrompt());
-  submitButton.disabled = !canSubmit;
+  setSubmitButtonLabel("开始生成");
+  setSubmitButtonsDisabled(!canSubmit);
 }
 
 function resetOptimizedPrompt() {
@@ -2249,6 +2388,19 @@ referenceInput.addEventListener("change", async () => {
 });
 
 promptTextarea?.addEventListener("input", () => {
+  if (promptTextareaMobile && promptTextareaMobile.value !== promptTextarea.value) {
+    promptTextareaMobile.value = promptTextarea.value;
+  }
+  if (getPromptMode() === "optimized") {
+    resetOptimizedPrompt();
+  }
+  syncSubmitButtonState();
+});
+
+promptTextareaMobile?.addEventListener("input", () => {
+  if (promptTextarea && promptTextarea.value !== promptTextareaMobile.value) {
+    promptTextarea.value = promptTextareaMobile.value;
+  }
   if (getPromptMode() === "optimized") {
     resetOptimizedPrompt();
   }
@@ -2321,7 +2473,8 @@ form.addEventListener("submit", async (event) => {
     return;
   }
 
-  submitButton.disabled = true;
+  setSubmitButtonLabel("生成中...");
+  setSubmitButtonsDisabled(true);
   setStatus("图片正在生成，请稍等...");
   renderLoading();
   void ensureBrowserNotificationPermission();
@@ -2373,7 +2526,9 @@ form.addEventListener("submit", async (event) => {
     renderCurrentResult(state.currentResult);
   } finally {
     clearProgress();
-    submitButton.disabled = false;
+    setSubmitButtonLabel("开始生成");
+    setSubmitButtonsDisabled(false);
+    syncSubmitButtonState();
   }
 });
 
