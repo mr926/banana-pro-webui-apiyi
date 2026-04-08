@@ -96,6 +96,8 @@ const state = {
   optimizedPrompt: "",
   optimizingPrompt: false,
   titleFlashTimer: null,
+  activePickerTarget: "",
+  pickerUnlockTimer: null,
 };
 
 const progressSteps = [
@@ -154,6 +156,23 @@ function syncNativeInputFiles(input, files) {
   const dt = new DataTransfer();
   files.forEach((file) => dt.items.add(file));
   input.files = dt.files;
+}
+
+function clearImagePickerLock() {
+  state.activePickerTarget = "";
+  if (state.pickerUnlockTimer) {
+    window.clearTimeout(state.pickerUnlockTimer);
+    state.pickerUnlockTimer = null;
+  }
+}
+
+function scheduleImagePickerUnlock(delay = 2000) {
+  if (state.pickerUnlockTimer) {
+    window.clearTimeout(state.pickerUnlockTimer);
+  }
+  state.pickerUnlockTimer = window.setTimeout(() => {
+    clearImagePickerLock();
+  }, delay);
 }
 
 function setSubmitButtonsDisabled(disabled) {
@@ -733,6 +752,10 @@ async function appendReferenceInputFiles(files) {
 
 function openImagePicker(target, mode = "library") {
   const input = target === "reference" ? referenceInput : baseInput;
+  if (!input || state.activePickerTarget) {
+    return;
+  }
+  state.activePickerTarget = target;
   const previousCapture = input.getAttribute("capture");
   input.value = "";
   if (mode === "camera") {
@@ -740,6 +763,7 @@ function openImagePicker(target, mode = "library") {
   } else {
     input.removeAttribute("capture");
   }
+  scheduleImagePickerUnlock();
   input.click();
   window.setTimeout(() => {
     if (previousCapture) {
@@ -752,6 +776,10 @@ function openImagePicker(target, mode = "library") {
 
 function bindUploadQuickActions() {
   document.querySelectorAll("[data-upload-trigger]").forEach((button) => {
+    if (button.dataset.uploadBound === "true") {
+      return;
+    }
+    button.dataset.uploadBound = "true";
     button.addEventListener("click", () => {
       const target = button.getAttribute("data-upload-trigger") || "base";
       const mode = button.getAttribute("data-upload-mode") || "library";
@@ -2380,10 +2408,12 @@ async function optimizePrompt() {
 }
 
 baseInput.addEventListener("change", async () => {
+  clearImagePickerLock();
   await applyBaseInputFiles(baseInput.files);
 });
 
 referenceInput.addEventListener("change", async () => {
+  clearImagePickerLock();
   await appendReferenceInputFiles(referenceInput.files);
 });
 
@@ -2709,6 +2739,7 @@ document.addEventListener("visibilitychange", () => {
 });
 
 window.addEventListener("focus", () => {
+  clearImagePickerLock();
   if (!document.hidden) {
     stopTitleFlash();
   }
