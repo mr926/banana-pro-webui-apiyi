@@ -8,216 +8,284 @@
   </head>
   <body>
     <div class="page-shell">
-      <!-- ── 左侧控制面板 ── -->
+
+      <!-- ── Top Header ── -->
+      <header class="page-header">
+        <div class="header-brand">
+          <span class="header-logo">Banana 图生图</span>
+          <span class="header-pro-badge">Pro</span>
+        </div>
+        <!-- Overview chips — updated by JS -->
+        <div class="header-chips" id="header-chips">
+          <span class="header-chip" id="chip-platform" style="display:none">
+            <span class="header-chip-label">平台</span>
+            <span id="chip-platform-val">—</span>
+          </span>
+          <span class="header-chip" id="chip-model" style="display:none">
+            <span class="header-chip-label">模型</span>
+            <span id="chip-model-val">—</span>
+          </span>
+          <span class="header-chip" id="chip-ratio" style="display:none">
+            <span class="header-chip-label">比例</span>
+            <span id="chip-ratio-val">自动</span>
+          </span>
+          <span class="header-chip" id="chip-size" style="display:none">
+            <span class="header-chip-label">尺寸</span>
+            <span id="chip-size-val">4K</span>
+          </span>
+        </div>
+        <div class="header-actions">
+          <a href="/history.html" class="ghost-button">全部历史</a>
+          <button type="button" id="logout-button" class="ghost-button hidden">退出</button>
+        </div>
+      </header>
+
+      <!-- ══════════════════════════════════════
+           LEFT — Control Panel (Desktop)
+           ══════════════════════════════════════ -->
       <aside class="control-panel">
-        <!-- 品牌头 -->
-        <header class="brand-card">
-          <div class="brand-topbar">
-            <div class="brand-title">
-              <span class="eyebrow">Pro</span>
-              <div>
-                <div class="brand-name">Banana 图生图</div>
-                <div class="brand-sub">工作台</div>
-              </div>
-            </div>
-            <div class="brand-actions">
-              <a href="/history.html" class="ghost-button">相册</a>
-              <button type="button" id="logout-button" class="ghost-button hidden">退出</button>
-            </div>
-          </div>
-          <!-- API 配置 -->
-          <div class="api-config-bar">
-            <label class="api-config-field">
-              <span>平台</span>
-              <select id="api-platform-select" class="prompt-select" aria-label="选择 API 平台">
-                <option value="">加载中…</option>
-              </select>
-            </label>
-            <label class="api-config-field">
-              <span>模型</span>
-              <select id="image-model-select" class="prompt-select" aria-label="选择生成模型">
-                <option value="">请先选择平台</option>
-              </select>
-            </label>
-          </div>
-          <p id="api-platform-hint" class="api-config-hint">将根据所选平台自动匹配接口地址和密钥。</p>
-        </header>
+        <form id="generate-form">
 
-        <form id="generate-form" class="panel-stack">
-          <!-- Step 1: 基础图 -->
-          <section class="panel-card">
-            <div class="section-label">
-              <span class="section-label-num">1</span>
-              基础结构图（必填）
-            </div>
-            <div class="upload-row">
-              <div class="upload-row-info">
-                <p>上传主约束图，比例默认自动继承</p>
+          <!-- ① 基础结构图 — 默认展开 -->
+          <section class="param-section" data-section="base">
+            <div class="param-section-header" aria-expanded="true" aria-controls="section-base-body">
+              <div class="param-section-title">
+                <span class="param-section-step">1</span>
+                基础结构图
               </div>
-              <label class="upload-mini" for="base-image" aria-label="上传基础图">
+              <div class="param-section-chevron">
+                <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <polyline points="2 4 6 8 10 4"/>
+                </svg>
+              </div>
+            </div>
+            <div class="param-section-body" id="section-base-body">
+              <p class="param-section-hint">上传主约束图，比例默认自动继承</p>
+              <label class="upload-zone" for="base-image" aria-label="上传基础图">
                 <input id="base-image" name="baseImage" type="file" accept="image/*" required />
-                <span aria-hidden="true">+</span>
-                <span class="sr-only">上传基础图</span>
+                <span class="upload-zone-icon">+</span>
+                <span class="upload-zone-label">点击上传基础图（必填）</span>
               </label>
+              <div id="base-preview" class="thumb-grid single"></div>
             </div>
-            <div id="base-preview" class="thumb-grid single"></div>
           </section>
 
-          <!-- Step 2: 参考图 -->
-          <section class="panel-card">
-            <div class="section-label">
-              <span class="section-label-num">2</span>
-              风格参考图（可选，最多 6 张）
-            </div>
-            <div class="upload-row">
-              <div class="upload-row-info">
-                <p>补充材质、光线和氛围</p>
+          <!-- ② 风格参考图 — 默认展开 -->
+          <section class="param-section" data-section="reference">
+            <div class="param-section-header" aria-expanded="true" aria-controls="section-ref-body">
+              <div class="param-section-title">
+                <span class="param-section-step">2</span>
+                风格参考图
               </div>
-              <label class="upload-mini" for="reference-images" aria-label="上传参考图">
+              <div class="param-section-chevron">
+                <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <polyline points="2 4 6 8 10 4"/>
+                </svg>
+              </div>
+            </div>
+            <div class="param-section-body" id="section-ref-body">
+              <p class="param-section-hint">补充材质、光线和氛围，最多 6 张</p>
+              <label class="upload-zone" for="reference-images" aria-label="上传参考图">
                 <input id="reference-images" name="referenceImages" type="file" accept="image/*" multiple />
-                <span aria-hidden="true">+</span>
-                <span class="sr-only">上传参考图</span>
+                <span class="upload-zone-icon">+</span>
+                <span class="upload-zone-label">点击上传参考图（可选）</span>
+              </label>
+              <div id="reference-preview" class="thumb-grid"></div>
+            </div>
+          </section>
+
+          <!-- ③ 提示词 — 默认展开 -->
+          <section class="param-section" data-section="prompt">
+            <div class="param-section-header" aria-expanded="true" aria-controls="section-prompt-body">
+              <div class="param-section-title">
+                <span class="param-section-step">3</span>
+                提示词
+              </div>
+              <div class="param-section-chevron">
+                <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <polyline points="2 4 6 8 10 4"/>
+                </svg>
+              </div>
+            </div>
+            <div class="param-section-body" id="section-prompt-body">
+              <!-- 模式切换 -->
+              <div class="segment-grid prompt-mode-grid">
+                <label class="segment"><input type="radio" name="promptMode" value="default" checked /><span>直接输入</span></label>
+                <label class="segment"><input type="radio" name="promptMode" value="optimized" /><span>AI 翻译优化</span></label>
+              </div>
+
+              <!-- 提示词库 -->
+              <div class="prompt-toolbar">
+                <select id="prompt-library-select" class="prompt-select">
+                  <option value="">从提示词列表选择并插入</option>
+                </select>
+                <button type="button" id="manage-prompt-library-button" class="ghost-button">管理</button>
+              </div>
+
+              <textarea
+                id="prompt"
+                name="prompt"
+                rows="3"
+                placeholder="例如：保留建筑结构，生成清晨自然光的现代外立面效果图，浅灰石材与木饰面，氛围克制、真实。"
+              ></textarea>
+
+              <!-- AI 优化面板（隐藏） -->
+              <div id="optimized-prompt-panel" class="optimized-prompt-panel hidden">
+                <div class="persona-toolbar">
+                  <div class="prompt-toolbar">
+                    <select id="prompt-persona-select" class="prompt-select">
+                      <option value="">选择转译人设</option>
+                    </select>
+                    <button type="button" id="manage-prompt-persona-button" class="ghost-button">管理</button>
+                  </div>
+                  <p id="prompt-persona-summary" class="persona-summary"></p>
+                </div>
+                <button type="button" id="optimize-prompt-button" class="primary-button optimize-button">提示词优化</button>
+                <div id="optimize-progress" class="inline-progress hidden"></div>
+                <textarea
+                  id="optimized-prompt"
+                  rows="4"
+                  placeholder="这里会显示 AI 翻译优化后的英文提示词，生成时会发送这里的内容。"
+                  readonly
+                ></textarea>
+                <p id="optimize-status" class="form-status inline-status"></p>
+              </div>
+            </div>
+          </section>
+
+          <!-- ④ 生成设置 — 默认折叠 -->
+          <section class="param-section is-collapsed" data-section="settings">
+            <div class="param-section-header" aria-expanded="false" aria-controls="section-settings-body">
+              <div class="param-section-title">
+                <span class="param-section-step">4</span>
+                生成设置
+              </div>
+              <div class="param-section-chevron">
+                <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <polyline points="2 4 6 8 10 4"/>
+                </svg>
+              </div>
+            </div>
+            <div class="param-section-body" id="section-settings-body">
+              <!-- 比例 -->
+              <div>
+                <div class="setting-row" style="margin-bottom:6px;">
+                  <span class="setting-label">图片比例<small>推荐自动，必要时手动覆盖</small></span>
+                  <div class="ratio-orientation-preview" id="ratio-orientation-preview">
+                    <div class="orientation-card" data-orientation="landscape">
+                      <span class="orientation-shape orientation-shape-landscape"></span>
+                    </div>
+                    <div class="orientation-card" data-orientation="portrait">
+                      <span class="orientation-shape orientation-shape-portrait"></span>
+                    </div>
+                  </div>
+                </div>
+                <div class="chip-grid" id="aspect-ratio-group">
+                  <label class="chip"><input type="radio" name="aspectRatio" value="auto" checked /><span><strong>自动</strong></span></label>
+                  <label class="chip"><input type="radio" name="aspectRatio" value="1:1" /><span><strong>1:1</strong></span></label>
+                  <label class="chip"><input type="radio" name="aspectRatio" value="4:3" /><span><strong>4:3</strong></span></label>
+                  <label class="chip"><input type="radio" name="aspectRatio" value="3:4" /><span><strong>3:4</strong></span></label>
+                  <label class="chip"><input type="radio" name="aspectRatio" value="16:9" /><span><strong>16:9</strong></span></label>
+                  <label class="chip"><input type="radio" name="aspectRatio" value="9:16" /><span><strong>9:16</strong></span></label>
+                  <label class="chip"><input type="radio" name="aspectRatio" value="5:4" /><span><strong>5:4</strong></span></label>
+                  <label class="chip"><input type="radio" name="aspectRatio" value="4:5" /><span><strong>4:5</strong></span></label>
+                </div>
+              </div>
+
+              <!-- 大小 -->
+              <div class="setting-row">
+                <span class="setting-label">生成大小<small>越大越清晰，耗时更长</small></span>
+                <div class="segment-grid size-segment-grid">
+                  <label class="segment"><input type="radio" name="imageSize" value="1K" /><span>1K</span></label>
+                  <label class="segment"><input type="radio" name="imageSize" value="2K" /><span>2K</span></label>
+                  <label class="segment"><input type="radio" name="imageSize" value="4K" checked /><span>4K</span></label>
+                </div>
+              </div>
+
+              <div class="compact-divider"></div>
+
+              <!-- 网络搜索 -->
+              <label class="toggle-row">
+                <div class="toggle-row-text">
+                  <strong>网络搜索增强</strong>
+                  <p>在需要补充公开信息时启用</p>
+                </div>
+                <span class="switch">
+                  <input type="checkbox" name="enableSearch" value="true" />
+                  <span class="slider"></span>
+                </span>
               </label>
             </div>
-            <div id="reference-preview" class="thumb-grid"></div>
           </section>
 
-          <!-- Step 3: 参数 -->
-          <section class="panel-card">
-            <div class="section-label">
-              <span class="section-label-num">3</span>
-              参数
-            </div>
-
-            <!-- 比例 + 预览 -->
-            <div class="setting-row" style="margin-bottom:6px;">
-              <span class="setting-row-label">图片比例<small>推荐自动，必要时手动覆盖</small></span>
-              <div class="ratio-orientation-preview" id="ratio-orientation-preview">
-                <div class="orientation-card" data-orientation="landscape">
-                  <span class="orientation-shape orientation-shape-landscape"></span>
-                </div>
-                <div class="orientation-card" data-orientation="portrait">
-                  <span class="orientation-shape orientation-shape-portrait"></span>
-                </div>
+          <!-- ⑤ API 配置 — 默认折叠 -->
+          <section class="param-section is-collapsed" data-section="api">
+            <div class="param-section-header" aria-expanded="false" aria-controls="section-api-body">
+              <div class="param-section-title">
+                <span class="param-section-step">5</span>
+                API 配置
+              </div>
+              <div class="param-section-chevron">
+                <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <polyline points="2 4 6 8 10 4"/>
+                </svg>
               </div>
             </div>
-            <div class="chip-grid" id="aspect-ratio-group" style="margin-bottom:8px;">
-              <label class="chip"><input type="radio" name="aspectRatio" value="auto" checked /><span><strong>自动</strong></span></label>
-              <label class="chip"><input type="radio" name="aspectRatio" value="1:1" /><span><strong>1:1</strong></span></label>
-              <label class="chip"><input type="radio" name="aspectRatio" value="4:3" /><span><strong>4:3</strong></span></label>
-              <label class="chip"><input type="radio" name="aspectRatio" value="3:4" /><span><strong>3:4</strong></span></label>
-              <label class="chip"><input type="radio" name="aspectRatio" value="16:9" /><span><strong>16:9</strong></span></label>
-              <label class="chip"><input type="radio" name="aspectRatio" value="9:16" /><span><strong>9:16</strong></span></label>
-              <label class="chip"><input type="radio" name="aspectRatio" value="5:4" /><span><strong>5:4</strong></span></label>
-              <label class="chip"><input type="radio" name="aspectRatio" value="4:5" /><span><strong>4:5</strong></span></label>
-            </div>
-
-            <!-- 大小 + 搜索 同行 -->
-            <div class="setting-row">
-              <span class="setting-row-label">生成大小<small>越大越清晰，耗时更长</small></span>
-              <div class="segment-grid size-segment-grid">
-                <label class="segment"><input type="radio" name="imageSize" value="1K" /><span>1K</span></label>
-                <label class="segment"><input type="radio" name="imageSize" value="2K" /><span>2K</span></label>
-                <label class="segment"><input type="radio" name="imageSize" value="4K" checked /><span>4K</span></label>
+            <div class="param-section-body" id="section-api-body">
+              <div class="setting-row">
+                <span class="setting-label">平台</span>
+                <select id="api-platform-select" class="prompt-select" style="max-width:180px;" aria-label="选择 API 平台">
+                  <option value="">加载中…</option>
+                </select>
               </div>
-            </div>
-
-            <div class="compact-divider"></div>
-
-            <label class="toggle-row">
-              <div>
-                <strong>网络搜索增强</strong>
-                <p>在需要补充公开信息时启用</p>
+              <div class="setting-row">
+                <span class="setting-label">模型</span>
+                <select id="image-model-select" class="prompt-select" style="max-width:180px;" aria-label="选择生成模型">
+                  <option value="">请先选择平台</option>
+                </select>
               </div>
-              <span class="switch">
-                <input type="checkbox" name="enableSearch" value="true" />
-                <span class="slider"></span>
-              </span>
-            </label>
+              <p id="api-platform-hint" class="param-section-hint">将根据所选平台自动匹配接口地址和密钥。</p>
+            </div>
           </section>
 
-          <!-- Step 4: 提示词 -->
-          <section class="panel-card">
-            <div class="section-label">
-              <span class="section-label-num">4</span>
-              提示词
-            </div>
+          <!-- Generate button & status -->
+          <button type="submit" id="submit-button" class="primary-button">开始生成</button>
+          <p id="form-status" class="form-status" style="padding:0 2px;"></p>
 
-            <!-- 模式切换 -->
-            <div class="segment-grid prompt-mode-grid">
-              <label class="segment"><input type="radio" name="promptMode" value="default" checked /><span>直接输入</span></label>
-              <label class="segment"><input type="radio" name="promptMode" value="optimized" /><span>AI 翻译优化</span></label>
-            </div>
-
-            <!-- 提示词库 -->
-            <div class="prompt-toolbar">
-              <select id="prompt-library-select" class="prompt-select">
-                <option value="">从提示词列表选择并插入</option>
-              </select>
-              <button type="button" id="manage-prompt-library-button" class="ghost-button">管理</button>
-            </div>
-
-            <textarea
-              id="prompt"
-              name="prompt"
-              rows="3"
-              placeholder="例如：保留建筑结构，生成清晨自然光的现代外立面效果图，浅灰石材与木饰面，氛围克制、真实。"
-            ></textarea>
-
-            <!-- AI 优化面板（隐藏） -->
-            <div id="optimized-prompt-panel" class="optimized-prompt-panel hidden">
-              <div class="persona-toolbar">
-                <div class="prompt-toolbar">
-                  <select id="prompt-persona-select" class="prompt-select">
-                    <option value="">选择转译人设</option>
-                  </select>
-                  <button type="button" id="manage-prompt-persona-button" class="ghost-button">管理</button>
-                </div>
-                <p id="prompt-persona-summary" class="persona-summary"></p>
-              </div>
-              <button type="button" id="optimize-prompt-button" class="primary-button optimize-button">提示词优化</button>
-              <div id="optimize-progress" class="inline-progress hidden"></div>
-              <textarea
-                id="optimized-prompt"
-                rows="4"
-                placeholder="这里会显示 AI 翻译优化后的英文提示词，生成时会发送这里的内容。"
-                readonly
-              ></textarea>
-              <p id="optimize-status" class="form-status inline-status"></p>
-            </div>
-
-            <button type="submit" id="submit-button" class="primary-button">开始生成</button>
-            <p id="form-status" class="form-status"></p>
-          </section>
         </form>
       </aside>
 
-      <!-- ── 右侧结果区 ── -->
+      <!-- ══════════════════════════════════════
+           RIGHT — Result & History (Desktop)
+           ══════════════════════════════════════ -->
       <main class="result-panel">
-        <!-- 当前结果 -->
+
+        <!-- Current result -->
         <section class="preview-card">
           <div class="preview-head">
             <h2>当前结果</h2>
             <div id="result-meta" class="result-meta"></div>
           </div>
-
           <div id="result-stage" class="result-stage empty">
             <div class="placeholder">
               <div class="placeholder-icon">▣</div>
               <h3>准备生成</h3>
-              <p>完成左侧 4 个步骤后即可生成。</p>
+              <p>上传基础图并填写提示词后，即可开始渲染。</p>
             </div>
           </div>
         </section>
 
-        <!-- 历史记录 -->
+        <!-- Recent history — gallery grid (latest 10) -->
         <section class="history-card">
-          <div class="preview-head">
+          <div class="history-card-head">
             <h2>最近历史</h2>
-            <button type="button" id="refresh-history" class="ghost-button">刷新</button>
+            <div class="history-card-actions">
+              <button type="button" id="refresh-history" class="ghost-button">刷新</button>
+            </div>
           </div>
-          <div id="history-list" class="history-list"></div>
-          <div id="history-pagination" class="pagination-bar history-pagination hidden">
+          <div id="history-list" class="history-gallery"></div>
+          <!-- Pagination kept for JS compat but hidden; gallery shows latest 10 -->
+          <div id="history-pagination" class="pagination-bar hidden">
             <span id="history-pagination-summary" class="pagination-summary"></span>
             <div class="pagination-controls">
               <button type="button" id="history-prev-page" class="ghost-button">上一页</button>
@@ -225,9 +293,194 @@
               <button type="button" id="history-next-page" class="ghost-button">下一页</button>
             </div>
           </div>
+          <div class="history-view-all">
+            <a href="/history.html">查看全部历史 →</a>
+          </div>
         </section>
+
       </main>
-    </div>
+
+      <!-- ══════════════════════════════════════
+           MOBILE — Three-tab panels
+           ══════════════════════════════════════ -->
+
+      <!-- Params panel -->
+      <div class="mobile-panel mobile-panel-params is-active" id="mobile-panel-params">
+        <!-- Reuses same param-section structure, cloned/referenced by CSS -->
+        <!-- We duplicate the form for mobile to avoid JS complexity -->
+        <form id="generate-form-mobile" onsubmit="document.getElementById('generate-form').dispatchEvent(new Event('submit', {bubbles:true,cancelable:true})); return false;">
+
+          <section class="param-section" data-section="base-m">
+            <div class="param-section-header" aria-expanded="true">
+              <div class="param-section-title">
+                <span class="param-section-step">1</span>基础结构图
+              </div>
+              <div class="param-section-chevron"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="2 4 6 8 10 4"/></svg></div>
+            </div>
+            <div class="param-section-body">
+              <p class="param-section-hint">上传主约束图，比例默认自动继承</p>
+              <label class="upload-zone" for="base-image" aria-label="上传基础图">
+                <span class="upload-zone-icon">+</span>
+                <span class="upload-zone-label">点击上传基础图（必填）</span>
+              </label>
+              <div id="base-preview-m" class="thumb-grid single"></div>
+            </div>
+          </section>
+
+          <section class="param-section" data-section="ref-m">
+            <div class="param-section-header" aria-expanded="true">
+              <div class="param-section-title">
+                <span class="param-section-step">2</span>风格参考图
+              </div>
+              <div class="param-section-chevron"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="2 4 6 8 10 4"/></svg></div>
+            </div>
+            <div class="param-section-body">
+              <p class="param-section-hint">补充材质、光线和氛围，最多 6 张</p>
+              <label class="upload-zone" for="reference-images" aria-label="上传参考图">
+                <span class="upload-zone-icon">+</span>
+                <span class="upload-zone-label">点击上传参考图（可选）</span>
+              </label>
+              <div id="reference-preview-m" class="thumb-grid"></div>
+            </div>
+          </section>
+
+          <section class="param-section" data-section="prompt-m">
+            <div class="param-section-header" aria-expanded="true">
+              <div class="param-section-title">
+                <span class="param-section-step">3</span>提示词
+              </div>
+              <div class="param-section-chevron"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="2 4 6 8 10 4"/></svg></div>
+            </div>
+            <div class="param-section-body">
+              <textarea name="prompt-m" rows="4" id="prompt-m" placeholder="例如：保留建筑结构，生成清晨自然光的现代外立面效果图…"></textarea>
+            </div>
+          </section>
+
+          <section class="param-section is-collapsed" data-section="settings-m">
+            <div class="param-section-header" aria-expanded="false">
+              <div class="param-section-title">
+                <span class="param-section-step">4</span>生成设置
+              </div>
+              <div class="param-section-chevron"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="2 4 6 8 10 4"/></svg></div>
+            </div>
+            <div class="param-section-body">
+              <div class="chip-grid">
+                <label class="chip"><input type="radio" name="aspectRatio-m" value="auto" checked /><span><strong>自动</strong></span></label>
+                <label class="chip"><input type="radio" name="aspectRatio-m" value="1:1" /><span><strong>1:1</strong></span></label>
+                <label class="chip"><input type="radio" name="aspectRatio-m" value="4:3" /><span><strong>4:3</strong></span></label>
+                <label class="chip"><input type="radio" name="aspectRatio-m" value="3:4" /><span><strong>3:4</strong></span></label>
+                <label class="chip"><input type="radio" name="aspectRatio-m" value="16:9" /><span><strong>16:9</strong></span></label>
+                <label class="chip"><input type="radio" name="aspectRatio-m" value="9:16" /><span><strong>9:16</strong></span></label>
+                <label class="chip"><input type="radio" name="aspectRatio-m" value="5:4" /><span><strong>5:4</strong></span></label>
+                <label class="chip"><input type="radio" name="aspectRatio-m" value="4:5" /><span><strong>4:5</strong></span></label>
+              </div>
+              <div class="setting-row" style="margin-top:8px;">
+                <span class="setting-label">生成大小</span>
+                <div class="segment-grid size-segment-grid">
+                  <label class="segment"><input type="radio" name="imageSize-m" value="1K" /><span>1K</span></label>
+                  <label class="segment"><input type="radio" name="imageSize-m" value="2K" /><span>2K</span></label>
+                  <label class="segment"><input type="radio" name="imageSize-m" value="4K" checked /><span>4K</span></label>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="param-section is-collapsed" data-section="api-m">
+            <div class="param-section-header" aria-expanded="false">
+              <div class="param-section-title">
+                <span class="param-section-step">5</span>API 配置
+              </div>
+              <div class="param-section-chevron"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="2 4 6 8 10 4"/></svg></div>
+            </div>
+            <div class="param-section-body">
+              <div class="setting-row">
+                <span class="setting-label">平台</span>
+                <select id="api-platform-select-m" class="prompt-select" style="max-width:160px;" aria-label="选择 API 平台">
+                  <option value="">加载中…</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <span class="setting-label">模型</span>
+                <select id="image-model-select-m" class="prompt-select" style="max-width:160px;" aria-label="选择生成模型">
+                  <option value="">请先选择平台</option>
+                </select>
+              </div>
+            </div>
+          </section>
+
+        </form>
+      </div>
+
+      <!-- Result panel (mobile) -->
+      <div class="mobile-panel mobile-panel-result" id="mobile-panel-result">
+        <section class="preview-card" id="preview-card-mobile">
+          <div class="preview-head">
+            <h2>当前结果</h2>
+            <div id="result-meta-mobile" class="result-meta"></div>
+          </div>
+          <div id="result-stage-mobile" class="result-stage empty">
+            <div class="placeholder">
+              <div class="placeholder-icon">▣</div>
+              <h3>准备生成</h3>
+              <p>前往参数页完成设置后即可生成。</p>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- History panel (mobile) -->
+      <div class="mobile-panel mobile-panel-history" id="mobile-panel-history">
+        <div class="history-card" style="margin-top:0;">
+          <div class="history-card-head">
+            <h2>历史记录</h2>
+            <div class="history-card-actions">
+              <a href="/history.html" class="ghost-button">全部</a>
+            </div>
+          </div>
+          <div id="history-list-mobile" class="history-gallery"></div>
+          <div class="history-view-all">
+            <a href="/history.html">查看全部历史 →</a>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /.page-shell -->
+
+    <!-- ── Mobile Tab Bar ── -->
+    <nav class="mobile-tabbar" id="mobile-tabbar" role="tablist">
+      <div class="mobile-tabbar-inner">
+        <button class="mobile-tab is-active" data-tab="params" role="tab" aria-selected="true">
+          <div class="mobile-tab-icon-wrap">
+            <span class="mobile-tab-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+              </svg>
+            </span>
+          </div>
+          <span>参数</span>
+        </button>
+        <button class="mobile-tab" data-tab="result" role="tab" aria-selected="false">
+          <div class="mobile-tab-icon-wrap">
+            <span class="mobile-tab-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+              </svg>
+            </span>
+          </div>
+          <span>结果</span>
+        </button>
+        <button class="mobile-tab" data-tab="history" role="tab" aria-selected="false">
+          <div class="mobile-tab-icon-wrap">
+            <span class="mobile-tab-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+              </svg>
+            </span>
+          </div>
+          <span>历史</span>
+        </button>
+      </div>
+    </nav>
 
     <!-- ── 提示词库 Modal ── -->
     <div id="prompt-library-modal" class="modal-overlay hidden" aria-hidden="true">
@@ -304,12 +557,12 @@
     <!-- ── 认证 Overlay ── -->
     <div id="auth-overlay" class="auth-overlay hidden" aria-hidden="true">
       <form id="login-form" class="auth-card">
-        <div class="eyebrow">Protected</div>
+        <div class="eyebrow" style="display:inline-flex;align-items:center;height:18px;padding:0 8px;border-radius:999px;background:var(--surface-raised);color:var(--text-secondary);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px;">Protected</div>
         <h2>请输入访问密码</h2>
         <p>验证通过后才会显示历史记录和生成能力。</p>
         <input class="sr-only" type="text" name="username" autocomplete="username" value="banana-pro-ui" tabindex="-1" aria-hidden="true" />
         <input id="password-input" name="password" class="auth-input" type="password" placeholder="请输入密码" autocomplete="current-password" />
-        <button type="submit" class="primary-button">进入工作台</button>
+        <button type="submit" class="primary-button" style="width:100%;margin-top:8px;min-height:40px;">进入工作台</button>
         <p id="auth-status" class="form-status"></p>
       </form>
     </div>
@@ -327,22 +580,20 @@
       </div>
     </template>
 
+    <!-- Gallery item template (replaces old list template) -->
     <template id="history-item-template">
-      <article class="history-item">
-        <div class="history-image-wrap">
+      <article class="history-gallery-item">
+        <div class="history-gallery-thumb">
           <img class="history-image" alt="历史图片" />
           <div class="image-transfer-actions">
-            <button type="button" class="image-transfer-button history-send-base">基</button>
-            <button type="button" class="image-transfer-button history-send-reference">参</button>
+            <button type="button" class="image-transfer-button history-send-base">基础图</button>
+            <button type="button" class="image-transfer-button history-send-reference">参考图</button>
           </div>
         </div>
-        <div class="history-info">
-          <div class="history-topline">
-            <strong class="history-time"></strong>
-            <span class="history-tags"></span>
-          </div>
-          <p class="history-prompt"></p>
-          <div class="history-actions">
+        <div class="history-gallery-info">
+          <div class="history-gallery-meta history-time"></div>
+          <div class="history-gallery-tags history-tags"></div>
+          <div class="history-gallery-actions">
             <button type="button" class="history-view ghost-button">查看</button>
             <a class="history-download ghost-button" download>下载</a>
             <button type="button" class="history-copy ghost-button">复制</button>
@@ -353,5 +604,86 @@
     </template>
 
     <script src="/app.js" defer></script>
+
+    <!-- Mobile tab switching & section collapse logic -->
+    <script>
+      // ── Section collapse ──
+      document.querySelectorAll('.param-section-header').forEach(header => {
+        header.addEventListener('click', () => {
+          const section = header.closest('.param-section');
+          const collapsed = section.classList.toggle('is-collapsed');
+          header.setAttribute('aria-expanded', String(!collapsed));
+        });
+      });
+
+      // ── Mobile tab switching ──
+      const tabs = document.querySelectorAll('.mobile-tab');
+      const panels = {
+        params:  document.getElementById('mobile-panel-params'),
+        result:  document.getElementById('mobile-panel-result'),
+        history: document.getElementById('mobile-panel-history'),
+      };
+
+      function switchMobileTab(tabId) {
+        tabs.forEach(t => {
+          const active = t.dataset.tab === tabId;
+          t.classList.toggle('is-active', active);
+          t.setAttribute('aria-selected', String(active));
+        });
+        Object.entries(panels).forEach(([key, el]) => {
+          if (el) el.classList.toggle('is-active', key === tabId);
+        });
+      }
+
+      tabs.forEach(tab => {
+        tab.addEventListener('click', () => switchMobileTab(tab.dataset.tab));
+      });
+
+      // Auto-switch to result tab when generation completes
+      // app.js calls window.onMobileResultReady() if defined
+      window.onMobileResultReady = function() {
+        if (window.innerWidth <= 767) {
+          switchMobileTab('result');
+        }
+      };
+
+      // Sync mobile API selects → desktop state
+      document.getElementById('api-platform-select-m')?.addEventListener('change', (e) => {
+        const desktop = document.getElementById('api-platform-select');
+        if (desktop) { desktop.value = e.target.value; desktop.dispatchEvent(new Event('change')); }
+      });
+      document.getElementById('image-model-select-m')?.addEventListener('change', (e) => {
+        const desktop = document.getElementById('image-model-select');
+        if (desktop) { desktop.value = e.target.value; desktop.dispatchEvent(new Event('change')); }
+      });
+
+      // Sync mobile prompt with desktop textarea
+      const desktopPrompt = document.getElementById('prompt');
+      const mobilePrompt = document.getElementById('prompt-m');
+      if (desktopPrompt && mobilePrompt) {
+        mobilePrompt.addEventListener('input', () => {
+          desktopPrompt.value = mobilePrompt.value;
+        });
+        desktopPrompt.addEventListener('input', () => {
+          mobilePrompt.value = desktopPrompt.value;
+        });
+      }
+
+      // ── Header chips update ──
+      // Expose function for app.js to call
+      window.updateHeaderChips = function(data) {
+        const show = (id, val, labelId) => {
+          const chip = document.getElementById(id);
+          const valEl = document.getElementById(labelId);
+          if (!chip) return;
+          if (val) { chip.style.display = ''; if (valEl) valEl.textContent = val; }
+          else chip.style.display = 'none';
+        };
+        show('chip-platform', data.platform, 'chip-platform-val');
+        show('chip-model', data.model, 'chip-model-val');
+        show('chip-ratio', data.ratio, 'chip-ratio-val');
+        show('chip-size', data.size, 'chip-size-val');
+      };
+    </script>
   </body>
 </html>
