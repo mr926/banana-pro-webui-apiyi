@@ -79,15 +79,11 @@
               </div>
             </div>
             <div class="param-section-body" id="section-base-body">
-              <p class="param-section-hint">上传主约束图，比例默认自动继承</p>
-              <div class="upload-quick-actions">
-                <button type="button" class="ghost-button upload-quick-button" data-upload-trigger="base" data-upload-mode="library">相册 / 文件</button>
-                <button type="button" class="ghost-button upload-quick-button" data-upload-trigger="base" data-upload-mode="camera">拍照</button>
-                <span class="upload-quick-hint">桌面支持拖拽文件，手机可直接调起相机。</span>
-              </div>
-              <label class="upload-zone" data-upload-zone="base" for="base-image" aria-label="上传基础图">
+              <p class="param-section-hint">上传主约束图，比例默认自动继承；桌面端也支持直接拖拽。</p>
+              <label class="upload-zone" data-upload-zone="base" aria-label="上传基础图">
+                <input data-upload-input="base" type="file" accept="image/*,.heic,.heif,.heics,.heifs" required />
                 <span class="upload-zone-icon">+</span>
-                <span class="upload-zone-label">点击上传或拖拽基础图（必填）</span>
+                <span class="upload-zone-label">上传基础图（必填）</span>
               </label>
               <div id="base-preview" class="thumb-grid single"></div>
             </div>
@@ -107,15 +103,11 @@
               </div>
             </div>
             <div class="param-section-body" id="section-ref-body">
-              <p class="param-section-hint">补充材质、光线和氛围，最多 6 张</p>
-              <div class="upload-quick-actions">
-                <button type="button" class="ghost-button upload-quick-button" data-upload-trigger="reference" data-upload-mode="library">追加参考图</button>
-                <button type="button" class="ghost-button upload-quick-button" data-upload-trigger="reference" data-upload-mode="camera">拍照追加</button>
-                <span class="upload-quick-hint">移动端单次拍照追加 1 张，桌面可多选或拖拽。</span>
-              </div>
-              <label class="upload-zone" data-upload-zone="reference" for="reference-images" aria-label="上传参考图">
+              <p class="param-section-hint">补充材质、光线和氛围，最多 6 张；桌面端支持多选和拖拽。</p>
+              <label class="upload-zone" data-upload-zone="reference" aria-label="上传参考图">
+                <input data-upload-input="reference" type="file" accept="image/*,.heic,.heif,.heics,.heifs" multiple />
                 <span class="upload-zone-icon">+</span>
-                <span class="upload-zone-label">点击上传或拖拽参考图（可选）</span>
+                <span class="upload-zone-label">上传参考图（可选）</span>
               </label>
               <div id="reference-preview" class="thumb-grid"></div>
             </div>
@@ -356,15 +348,11 @@
               <div class="param-section-chevron"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="2 4 6 8 10 4"/></svg></div>
             </div>
             <div class="param-section-body">
-              <p class="param-section-hint">上传主约束图，比例默认自动继承</p>
-              <div class="upload-quick-actions compact">
-                <button type="button" class="ghost-button upload-quick-button" data-upload-trigger="base" data-upload-mode="library">相册</button>
-                <button type="button" class="ghost-button upload-quick-button" data-upload-trigger="base" data-upload-mode="camera">拍照</button>
-                <span class="upload-quick-hint">iPhone 建议从 Safari 安装到主屏幕后使用。</span>
-              </div>
-              <label class="upload-zone" data-upload-zone="base" for="base-image" aria-label="上传基础图">
+              <p class="param-section-hint">上传主约束图，系统会自动提供相册、拍照或文件来源。</p>
+              <label class="upload-zone" data-upload-zone="base" aria-label="上传基础图">
+                <input data-upload-input="base" type="file" accept="image/*,.heic,.heif,.heics,.heifs" required />
                 <span class="upload-zone-icon">+</span>
-                <span class="upload-zone-label">点击上传基础图（必填）</span>
+                <span class="upload-zone-label">上传基础图（必填）</span>
               </label>
               <div id="base-preview-m" class="thumb-grid single"></div>
             </div>
@@ -378,15 +366,11 @@
               <div class="param-section-chevron"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="2 4 6 8 10 4"/></svg></div>
             </div>
             <div class="param-section-body">
-              <p class="param-section-hint">补充材质、光线和氛围，最多 6 张</p>
-              <div class="upload-quick-actions compact">
-                <button type="button" class="ghost-button upload-quick-button" data-upload-trigger="reference" data-upload-mode="library">相册</button>
-                <button type="button" class="ghost-button upload-quick-button" data-upload-trigger="reference" data-upload-mode="camera">拍照</button>
-                <span class="upload-quick-hint">拍照追加适合临时补一张参考图。</span>
-              </div>
-              <label class="upload-zone" data-upload-zone="reference" for="reference-images" aria-label="上传参考图">
+              <p class="param-section-hint">补充材质、光线和氛围，最多 6 张。</p>
+              <label class="upload-zone" data-upload-zone="reference" aria-label="上传参考图">
+                <input data-upload-input="reference" type="file" accept="image/*,.heic,.heif,.heics,.heifs" multiple />
                 <span class="upload-zone-icon">+</span>
-                <span class="upload-zone-label">点击上传参考图（可选）</span>
+                <span class="upload-zone-label">上传参考图（可选）</span>
               </label>
               <div id="reference-preview-m" class="thumb-grid"></div>
             </div>
@@ -655,11 +639,6 @@
         </div>
       </article>
     </template>
-
-    <div class="shared-upload-inputs" aria-hidden="true">
-      <input id="base-image" name="baseImage" class="shared-upload-input" type="file" accept="image/*,.heic,.heif,.heics,.heifs" required tabindex="-1" />
-      <input id="reference-images" name="referenceImages" class="shared-upload-input" type="file" accept="image/*,.heic,.heif,.heics,.heifs" multiple tabindex="-1" />
-    </div>
 
     <script src="/pwa.js" defer></script>
     <script src="/app.js" defer></script>

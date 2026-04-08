@@ -265,7 +265,13 @@
       return null;
     }
     if (!state.registrationPromise) {
-      state.registrationPromise = navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => null);
+      state.registrationPromise = navigator.serviceWorker
+        .register("/sw.js", { scope: "/" })
+        .then((registration) => {
+          registration.update().catch(() => {});
+          return registration;
+        })
+        .catch(() => null);
     }
     return state.registrationPromise;
   }

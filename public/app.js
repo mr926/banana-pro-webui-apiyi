@@ -1,6 +1,6 @@
 const form = document.getElementById("generate-form");
-const baseInput = document.getElementById("base-image");
-const referenceInput = document.getElementById("reference-images");
+const baseInputs = Array.from(document.querySelectorAll('input[data-upload-input="base"]'));
+const referenceInputs = Array.from(document.querySelectorAll('input[data-upload-input="reference"]'));
 const basePreview = document.getElementById("base-preview");
 const referencePreview = document.getElementById("reference-preview");
 const basePreviewMobile = document.getElementById("base-preview-m");
@@ -96,8 +96,6 @@ const state = {
   optimizedPrompt: "",
   optimizingPrompt: false,
   titleFlashTimer: null,
-  activePickerTarget: "",
-  pickerUnlockTimer: null,
 };
 
 const progressSteps = [
@@ -152,27 +150,35 @@ function revokePreviewUrls(container) {
   });
 }
 
-function syncNativeInputFiles(input, files) {
+function getInputGroup(inputs) {
+  if (Array.isArray(inputs)) {
+    return inputs.filter(Boolean);
+  }
+  return inputs ? [inputs] : [];
+}
+
+function syncNativeInputFiles(inputs, files, options = {}) {
+  const group = getInputGroup(inputs);
+  if (!group.length) {
+    return;
+  }
   const dt = new DataTransfer();
   files.forEach((file) => dt.items.add(file));
-  input.files = dt.files;
+  group.forEach((input) => {
+    input.files = dt.files;
+    if (typeof options.required === "boolean") {
+      input.required = options.required;
+    }
+  });
 }
 
-function clearImagePickerLock() {
-  state.activePickerTarget = "";
-  if (state.pickerUnlockTimer) {
-    window.clearTimeout(state.pickerUnlockTimer);
-    state.pickerUnlockTimer = null;
-  }
-}
-
-function scheduleImagePickerUnlock(delay = 2000) {
-  if (state.pickerUnlockTimer) {
-    window.clearTimeout(state.pickerUnlockTimer);
-  }
-  state.pickerUnlockTimer = window.setTimeout(() => {
-    clearImagePickerLock();
-  }, delay);
+function clearNativeInputFiles(inputs, options = {}) {
+  getInputGroup(inputs).forEach((input) => {
+    input.value = "";
+    if (typeof options.required === "boolean") {
+      input.required = options.required;
+    }
+  });
 }
 
 function setSubmitButtonsDisabled(disabled) {
@@ -674,17 +680,16 @@ async function applyBaseInputFiles(files) {
       setStatus(messages.join(" "));
     } catch (error) {
       processedFile = null;
-      baseInput.value = "";
+      clearNativeInputFiles(baseInputs, { required: true });
       const message = error instanceof Error ? error.message : "基础结构图压缩失败。";
       setStatus(message, true);
     }
   }
 
   state.baseImageFile = processedFile;
-  if (processedFile) {
-    syncNativeInputFiles(baseInput, [processedFile]);
-  }
-  baseInput.required = !state.baseImageFile;
+  syncNativeInputFiles(baseInputs, processedFile ? [processedFile] : [], {
+    required: !state.baseImageFile,
+  });
   renderBasePreview();
   syncSubmitButtonState();
 }
@@ -723,7 +728,7 @@ async function appendReferenceInputFiles(files) {
   }
 
   state.referenceFiles = [...state.referenceFiles, ...processedFiles];
-  syncNativeInputFiles(referenceInput, state.referenceFiles);
+  syncNativeInputFiles(referenceInputs, state.referenceFiles);
 
   const messages = [];
   if (convertedCount > 0) {
@@ -748,44 +753,6 @@ async function appendReferenceInputFiles(files) {
   }
   renderReferencePreview();
   syncSubmitButtonState();
-}
-
-function openImagePicker(target, mode = "library") {
-  const input = target === "reference" ? referenceInput : baseInput;
-  if (!input || state.activePickerTarget) {
-    return;
-  }
-  state.activePickerTarget = target;
-  const previousCapture = input.getAttribute("capture");
-  input.value = "";
-  if (mode === "camera") {
-    input.setAttribute("capture", "environment");
-  } else {
-    input.removeAttribute("capture");
-  }
-  scheduleImagePickerUnlock();
-  input.click();
-  window.setTimeout(() => {
-    if (previousCapture) {
-      input.setAttribute("capture", previousCapture);
-    } else {
-      input.removeAttribute("capture");
-    }
-  }, 1500);
-}
-
-function bindUploadQuickActions() {
-  document.querySelectorAll("[data-upload-trigger]").forEach((button) => {
-    if (button.dataset.uploadBound === "true") {
-      return;
-    }
-    button.dataset.uploadBound = "true";
-    button.addEventListener("click", () => {
-      const target = button.getAttribute("data-upload-trigger") || "base";
-      const mode = button.getAttribute("data-upload-mode") || "library";
-      openImagePicker(target, mode);
-    });
-  });
 }
 
 function bindUploadDropZones() {
@@ -898,9 +865,9 @@ function renderBasePreview() {
     renderFiles(container, files, "基础图", {
       onRemove: () => {
         state.baseImageFile = null;
-        baseInput.value = "";
-        baseInput.required = true;
+        clearNativeInputFiles(baseInputs, { required: true });
         renderBasePreview();
+        syncSubmitButtonState();
       },
     });
   });
@@ -911,8 +878,9 @@ function renderReferencePreview() {
     renderFiles(container, state.referenceFiles, "参考图", {
       onRemove: (index) => {
         state.referenceFiles.splice(index, 1);
-        syncNativeInputFiles(referenceInput, state.referenceFiles);
+        syncNativeInputFiles(referenceInputs, state.referenceFiles);
         renderReferencePreview();
+        syncSubmitButtonState();
       },
     });
   });
@@ -932,8 +900,7 @@ async function sendImageToBaseFromEntry(entry, options = {}) {
     const sourceFile = await fetchImageAsFile(transferImageUrl, entry.downloadName || "base-image");
     const result = await compressBaseImageIfNeeded(sourceFile);
     state.baseImageFile = result.file;
-    syncNativeInputFiles(baseInput, [result.file]);
-    baseInput.required = false;
+    syncNativeInputFiles(baseInputs, [result.file], { required: false });
     renderBasePreview();
     syncSubmitButtonState();
     if (!silent) {
@@ -970,7 +937,7 @@ async function sendImageToReferenceFromEntry(entry, options = {}) {
     const sourceFile = await fetchImageAsFile(transferImageUrl, entry.downloadName || "reference-image");
     const result = await compressReferenceImageIfNeeded(sourceFile);
     state.referenceFiles = [...state.referenceFiles, result.file];
-    syncNativeInputFiles(referenceInput, state.referenceFiles);
+    syncNativeInputFiles(referenceInputs, state.referenceFiles);
     renderReferencePreview();
     syncSubmitButtonState();
     if (!silent) {
@@ -2407,14 +2374,22 @@ async function optimizePrompt() {
   }
 }
 
-baseInput.addEventListener("change", async () => {
-  clearImagePickerLock();
-  await applyBaseInputFiles(baseInput.files);
+baseInputs.forEach((input) => {
+  input.addEventListener("click", () => {
+    input.value = "";
+  });
+  input.addEventListener("change", async (event) => {
+    await applyBaseInputFiles(event.currentTarget?.files);
+  });
 });
 
-referenceInput.addEventListener("change", async () => {
-  clearImagePickerLock();
-  await appendReferenceInputFiles(referenceInput.files);
+referenceInputs.forEach((input) => {
+  input.addEventListener("click", () => {
+    input.value = "";
+  });
+  input.addEventListener("change", async (event) => {
+    await appendReferenceInputFiles(event.currentTarget?.files);
+  });
 });
 
 promptTextarea?.addEventListener("input", () => {
@@ -2739,7 +2714,6 @@ document.addEventListener("visibilitychange", () => {
 });
 
 window.addEventListener("focus", () => {
-  clearImagePickerLock();
   if (!document.hidden) {
     stopTitleFlash();
   }
@@ -2750,7 +2724,6 @@ if (promptTextareaMobile && promptTextarea) {
 }
 bindMirroredRadioGroup("aspectRatio", "aspectRatio-m");
 bindMirroredRadioGroup("imageSize", "imageSize-m");
-bindUploadQuickActions();
 bindUploadDropZones();
 
 bootstrap();

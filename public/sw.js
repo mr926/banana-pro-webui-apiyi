@@ -1,4 +1,4 @@
-const CACHE_NAME = "banana-pro-shell-v1";
+const CACHE_NAME = "banana-pro-shell-v3";
 const SHELL_ASSETS = [
   "/",
   "/history.html",
@@ -50,16 +50,16 @@ self.addEventListener("fetch", (event) => {
   }
 
   event.respondWith(
-    caches.match(request).then((cached) => {
-      const networkRequest = fetch(request)
-        .then((response) => {
-          const cloned = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, cloned));
-          return response;
-        })
-        .catch(() => cached);
-      return cached || networkRequest;
-    }),
+    fetch(request)
+      .then((response) => {
+        const cloned = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(request, cloned));
+        return response;
+      })
+      .catch(async () => {
+        const cached = await caches.match(request);
+        return cached;
+      })
   );
 });
 

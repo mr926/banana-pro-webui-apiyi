@@ -347,27 +347,6 @@ body { padding-top: 48px; }
    UPLOAD ZONE
    ══════════════════════════════════════════════════════ */
 
-.upload-quick-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.upload-quick-actions.compact {
-  margin-bottom: 2px;
-}
-
-.upload-quick-button {
-  min-height: 30px;
-  padding-inline: 10px;
-}
-
-.upload-quick-hint {
-  font-size: 11px;
-  color: var(--text-tertiary);
-}
-
 .upload-zone {
   position: relative;
   display: flex;
@@ -375,12 +354,15 @@ body { padding-top: 48px; }
   justify-content: center;
   gap: 8px;
   min-height: 44px;
-  padding: 8px 12px;
+  width: 100%;
+  padding: 10px 12px;
   border: 1.5px dashed var(--border-strong);
   border-radius: var(--r-md);
   background: var(--surface-inset);
   cursor: pointer;
   transition: border-color var(--t-fast), background var(--t-fast);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .upload-zone:hover {
@@ -396,28 +378,14 @@ body { padding-top: 48px; }
 
 .upload-zone input {
   position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-
-.shared-upload-inputs {
-  position: fixed;
-  inset: auto;
   width: 1px;
   height: 1px;
-  overflow: hidden;
-  pointer-events: none;
-  opacity: 0;
-}
-
-.shared-upload-input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: 0;
+  margin: -1px;
   padding: 0;
   border: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
   opacity: 0;
   pointer-events: none;
 }
@@ -442,23 +410,32 @@ body { padding-top: 48px; }
   color: var(--text-secondary);
 }
 
-html[data-platform="desktop"] .upload-quick-button[data-upload-mode="camera"] {
-  display: none;
-}
-
 /* Thumb grid */
 .thumb-grid {
   display: grid;
+  width: 100%;
+  min-width: 0;
   grid-template-columns: repeat(3, 1fr);
   gap: 5px;
+  align-items: stretch;
 }
 
-.thumb-grid.single { grid-template-columns: 1fr; }
-.thumb-grid.single .thumb-card { aspect-ratio: 16/9; }
+.thumb-grid.single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.thumb-grid.single .thumb-card {
+  height: clamp(168px, 22vw, 240px);
+  min-height: clamp(168px, 22vw, 240px);
+  aspect-ratio: auto;
+}
 
 .thumb-card {
   position: relative;
   overflow: hidden;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   background: var(--surface-inset);
@@ -466,9 +443,17 @@ html[data-platform="desktop"] .upload-quick-button[data-upload-mode="camera"] {
 }
 
 .thumb-card img {
-  width: 100%; height: 100%;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 100%;
+  min-height: 100%;
   object-fit: cover;
+  object-position: center center;
   display: block;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 .thumb-badge {
@@ -1698,9 +1683,6 @@ button:focus-visible, .ghost-button:focus-visible,
   #aspect-ratio-group { grid-template-columns: repeat(4, 1fr); }
   .thumb-grid { grid-template-columns: repeat(2, 1fr); }
   .prompt-toolbar { flex-direction: column; align-items: stretch; }
-  .upload-quick-actions { align-items: stretch; }
-  .upload-quick-button { flex: 1 1 120px; min-height: 34px; }
-  .upload-quick-hint { width: 100%; }
   .modal-two-column { grid-template-columns: 1fr; }
   .album-grid { grid-template-columns: 1fr 1fr; }
 }
