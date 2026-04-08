@@ -33,6 +33,18 @@ except Exception:
     Image = None
     ImageOps = None
 
+try:
+    from pillow_heif import register_heif_opener
+except Exception:
+    register_heif_opener = None
+
+if Image is not None and register_heif_opener is not None:
+    try:
+        register_heif_opener()
+    except Exception:
+        # Keep startup resilient even if HEIF plugin registration fails.
+        pass
+
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 
@@ -841,18 +853,31 @@ def convert_image_with_sips_to_jpeg(data: bytes, filename: str, mime_type: str) 
         return output_path.read_bytes()
 
 
+def is_heif_like_upload(filename: str, mime_type: str) -> bool:
+    suffix = Path(filename or "").suffix.lower()
+    normalized_mime = str(mime_type or "").split(";", 1)[0].strip().lower()
+    if suffix in {".heic", ".heif", ".heics", ".heifs"}:
+        return True
+    return "heic" in normalized_mime or "heif" in normalized_mime
+
+
 def convert_uploaded_image_to_jpeg(data: bytes, filename: str, mime_type: str) -> bytes:
     errors: List[str] = []
+    heif_like = is_heif_like_upload(filename, mime_type)
 
     try:
         return convert_image_with_pillow_to_jpeg(data)
     except Exception as exc:
         errors.append(str(exc))
 
-    try:
-        return convert_image_with_sips_to_jpeg(data, filename, mime_type)
-    except Exception as exc:
-        errors.append(str(exc))
+    if heif_like and register_heif_opener is None:
+        errors.append("当前服务未安装 HEIC/HEIF 解码插件 pillow-heif。")
+
+    if sys.platform == "darwin":
+        try:
+            return convert_image_with_sips_to_jpeg(data, filename, mime_type)
+        except Exception as exc:
+            errors.append(str(exc))
 
     details = "；".join(message for message in errors if message) or "未找到可用的图片转换器。"
     raise RuntimeError(details)
