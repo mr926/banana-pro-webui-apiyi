@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <apiPlatforms version="1">
-  <platform id="apiyi" name="APIYI" default="true">
+  <platform id="apiyi" name="APIYI" default="true" defaultModel="gemini-3-pro-image-preview">
     <url>https://api.apiyi.com/v1beta/models/{model}:generateContent</url>
     <key></key>
     <models separator="|">gemini-3-pro-image-preview|gemini-3.1-flash-image-preview-4k</models>

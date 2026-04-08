@@ -57,7 +57,30 @@ PROMPT_OPTIMIZER_TIMEOUT = 90
 UPSTREAM_MAX_ATTEMPTS = 2
 RETRYABLE_UPSTREAM_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 SESSION_COOKIE_NAME = "banana_ui_session"
-SESSIONS: Dict[str, bool] = {}
+SESSION_MAX_AGE = 7 * 24 * 3600  # 7 days in seconds
+# SESSIONS: token -> expiry timestamp (float). Persisted to data/sessions.json.
+SESSIONS: Dict[str, float] = {}
+SESSIONS_FILE = DATA_DIR / "sessions.json"
+
+
+def load_sessions() -> None:
+    """Load persisted sessions from disk, pruning expired ones."""
+    global SESSIONS
+    try:
+        if SESSIONS_FILE.exists():
+            raw = json.loads(SESSIONS_FILE.read_text(encoding="utf-8"))
+            now = time.time()
+            SESSIONS = {k: v for k, v in raw.items() if isinstance(v, (int, float)) and v > now}
+    except Exception:
+        SESSIONS = {}
+
+
+def save_sessions() -> None:
+    """Persist current sessions to disk."""
+    try:
+        SESSIONS_FILE.write_text(json.dumps(SESSIONS), encoding="utf-8")
+    except Exception:
+        pass
 THUMB_MAX_EDGE = 480
 THUMB_JPEG_QUALITY = 72
 DEFAULT_HISTORY_PAGE_SIZE = 60
@@ -1441,7 +1464,13 @@ class AppHandler(BaseHTTPRequestHandler):
             return True
         cookies = parse_cookie_header(self.headers.get("Cookie", ""))
         token = cookies.get(SESSION_COOKIE_NAME, "")
-        return bool(token and token in SESSIONS)
+        if not token:
+            return False
+        expiry = SESSIONS.get(token)
+        if expiry is None or time.time() > expiry:
+            SESSIONS.pop(token, None)
+            return False
+        return True
 
     def ensure_authenticated(self) -> bool:
         if self.is_authenticated():
@@ -1711,8 +1740,12 @@ class AppHandler(BaseHTTPRequestHandler):
             return json_response(self, 401, {"error": "密码错误。", "authenticated": False})
 
         token = make_session_token(password)
-        SESSIONS[token] = True
-        cookie = f"{SESSION_COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax"
+        SESSIONS[token] = time.time() + SESSION_MAX_AGE
+        save_sessions()
+        cookie = (
+            f"{SESSION_COOKIE_NAME}={token}; Path=/; "
+            f"Max-Age={SESSION_MAX_AGE}; HttpOnly; SameSite=Lax"
+        )
         return json_response(
             self,
             200,
@@ -1725,6 +1758,7 @@ class AppHandler(BaseHTTPRequestHandler):
         token = cookies.get(SESSION_COOKIE_NAME, "")
         if token:
             SESSIONS.pop(token, None)
+            save_sessions()
         return json_response(
             self,
             200,
@@ -2324,6 +2358,7 @@ class AppHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     ensure_dirs()
+    load_sessions()
     host = get_setting("BANANA_PRO_HOST", "127.0.0.1")
     port = int(get_setting("BANANA_PRO_PORT", str(DEFAULT_PORT)))
     server = ThreadingHTTPServer((host, port), AppHandler)
