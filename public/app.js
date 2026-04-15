@@ -2564,92 +2564,167 @@ optimizePromptButton?.addEventListener("click", async () => {
   await optimizePrompt();
 });
 
-form.addEventListener("submit", async (event) => {
+// ── 重试计数器辅助函数 ─────────────────────────────────────────
+function getRetryUntilSuccess() {
+  const cb = document.getElementById(“retry-until-success”);
+  const cbM = document.getElementById(“retry-until-success-m”);
+  return (cb?.checked || cbM?.checked) ?? false;
+}
+
+function setRetryCount(n) {
+  const counter = document.getElementById(“retry-counter”);
+  const counterM = document.getElementById(“retry-counter-m”);
+  const count = document.getElementById(“retry-count”);
+  const countM = document.getElementById(“retry-count-m”);
+  if (n > 0) {
+    if (counter) counter.style.display = “”;
+    if (counterM) counterM.style.display = “”;
+  } else {
+    if (counter) counter.style.display = “none”;
+    if (counterM) counterM.style.display = “none”;
+  }
+  if (count) count.textContent = String(n);
+  if (countM) countM.textContent = String(n);
+}
+
+// 桌面/移动勾选框保持同步
+document.getElementById(“retry-until-success”)?.addEventListener(“change”, (e) => {
+  const cbM = document.getElementById(“retry-until-success-m”);
+  if (cbM) cbM.checked = e.target.checked;
+});
+document.getElementById(“retry-until-success-m”)?.addEventListener(“change”, (e) => {
+  const cb = document.getElementById(“retry-until-success”);
+  if (cb) cb.checked = e.target.checked;
+});
+
+// ── 核心生成函数（单次请求） ───────────────────────────────────
+async function doGenerateOnce(formData) {
+  const response = await fetch(“/api/generate”, {
+    method: “POST”,
+    body: formData,
+  });
+  const payload = await readJsonSafely(response);
+  clearProgress();
+  if (!response.ok) {
+    throw new Error(getPayloadErrorMessage(payload, “生成失败”));
+  }
+  return payload;
+}
+
+// ── 构建 FormData（方便重试时复用） ───────────────────────────
+function buildGenerateFormData(finalPrompt, promptMode) {
+  const formData = new FormData();
+  formData.set(“apiPlatformId”, state.selectedApiPlatformId);
+  formData.set(“imageModel”, state.selectedImageModel);
+  formData.set(“prompt”, finalPrompt);
+  formData.set(“sourcePrompt”, promptTextarea.value || “”);
+  formData.set(“promptMode”, promptMode);
+  formData.set(“aspectRatio”, form.querySelector('input[name=”aspectRatio”]:checked').value);
+  formData.set(“imageSize”, form.querySelector('input[name=”imageSize”]:checked').value);
+  formData.append(“baseImage”, state.baseImageFile);
+  state.referenceFiles.forEach((file) => {
+    formData.append(“referenceImages”, file);
+  });
+  const searchEnabled = form.querySelector('input[name=”enableSearch”]').checked;
+  formData.set(“enableSearch”, String(searchEnabled));
+  return formData;
+}
+
+form.addEventListener(“submit”, async (event) => {
   event.preventDefault();
 
   if (!state.baseImageFile) {
-    setStatus("请先上传基础结构图。", true);
+    setStatus(“请先上传基础结构图。”, true);
     return;
   }
 
   if (!state.selectedApiPlatformId || !state.selectedImageModel) {
-    setStatus("请先选择可用的 API 平台和生成模型。", true);
+    setStatus(“请先选择可用的 API 平台和生成模型。”, true);
     syncSubmitButtonState();
     return;
   }
 
   const promptMode = getPromptMode();
-  let finalPrompt = (promptTextarea.value || "").trim();
-  if (promptMode === "optimized") {
-    finalPrompt = (optimizedPromptTextarea?.value || state.optimizedPrompt || "").trim();
+  let finalPrompt = (promptTextarea.value || “”).trim();
+  if (promptMode === “optimized”) {
+    finalPrompt = (optimizedPromptTextarea?.value || state.optimizedPrompt || “”).trim();
     if (!finalPrompt) {
-      setStatus("当前处于 AI 翻译优化模式，请先点击“提示词优化”。", true);
+      setStatus(“当前处于 AI 翻译优化模式，请先点击”提示词优化”。”, true);
       syncSubmitButtonState();
       return;
     }
   } else if (!finalPrompt) {
-    setStatus("请先输入提示词。", true);
+    setStatus(“请先输入提示词。”, true);
     syncSubmitButtonState();
     return;
   }
 
-  setSubmitButtonLabel("生成中...");
+  const retryMode = getRetryUntilSuccess();
+  let retryCount = 0;
+  setRetryCount(0);
+
+  setSubmitButtonLabel(“生成中...”);
   setSubmitButtonsDisabled(true);
-  setStatus("图片正在生成，请稍等...");
+  setStatus(“图片正在生成，请稍等...”);
   renderLoading();
   void ensureBrowserNotificationPermission();
 
-  const formData = new FormData();
-  formData.set("apiPlatformId", state.selectedApiPlatformId);
-  formData.set("imageModel", state.selectedImageModel);
-  formData.set("prompt", finalPrompt);
-  formData.set("sourcePrompt", promptTextarea.value || "");
-  formData.set("promptMode", promptMode);
-  formData.set("aspectRatio", form.querySelector('input[name="aspectRatio"]:checked').value);
-  formData.set("imageSize", form.querySelector('input[name="imageSize"]:checked').value);
-  formData.append("baseImage", state.baseImageFile);
-  state.referenceFiles.forEach((file) => {
-    formData.append("referenceImages", file);
-  });
-  const searchEnabled = form.querySelector('input[name="enableSearch"]').checked;
-  formData.set("enableSearch", String(searchEnabled));
+  // 允许中止重试的标志（按钮再次点击时可中断）
+  let aborted = false;
+  const abortHandler = () => { aborted = true; };
+  document.getElementById(“submit-button”)?.addEventListener(“click”, abortHandler, { once: true });
+  document.getElementById(“submit-button-mobile”)?.addEventListener(“click”, abortHandler, { once: true });
 
-  try {
-    const response = await fetch("/api/generate", {
-      method: "POST",
-      body: formData,
-    });
-    const payload = await readJsonSafely(response);
-    clearProgress();
+  while (true) {
+    try {
+      const formData = buildGenerateFormData(finalPrompt, promptMode);
+      const payload = await doGenerateOnce(formData);
 
-    if (!response.ok) {
-      throw new Error(getPayloadErrorMessage(payload, "生成失败"));
+      // ── 成功 ──
+      setRetryCount(0);
+      setStatus(“生成完成，可以直接下载，也会自动保留到历史记录。”);
+      playSuccessSound();
+      getPwaRuntime()?.vibrate?.([120, 60, 120]);
+      sendBrowserNotification(“Banana Pro 图片生成成功”, “图片已经生成完成，可以回到页面查看和下载。”);
+      startTitleFlash(“生成成功”);
+      renderCurrentResult(payload);
+      // Notify mobile tab system to switch to result
+      if (window.onMobileResultReady) window.onMobileResultReady();
+      await loadHistory(1);
+      break; // 成功，退出循环
+
+    } catch (error) {
+      clearProgress();
+      const message = error instanceof Error ? error.message : “生成失败”;
+
+      if (retryMode && !aborted) {
+        // ── 失败 + 重试模式 ──
+        retryCount += 1;
+        setRetryCount(retryCount);
+        setStatus(`生成失败，正在自动重试（第 ${retryCount} 次）…  ${message}`, true);
+        playErrorSound();
+        // 短暂停顿 1.5s 再重试，避免频繁轰炸 API
+        await new Promise((r) => setTimeout(r, 1500));
+        renderLoading();
+        setStatus(`第 ${retryCount} 次重试中，请稍等...`);
+        continue; // 继续下一轮
+      } else {
+        // ── 普通失败 / 用户中断 ──
+        setStatus(message, true);
+        playErrorSound();
+        getPwaRuntime()?.vibrate?.([180, 80, 180, 80, 180]);
+        sendBrowserNotification(“Banana Pro 图片生成失败”, message);
+        startTitleFlash(“生成失败”);
+        renderCurrentResult(state.currentResult);
+        break;
+      }
     }
-
-    setStatus("生成完成，可以直接下载，也会自动保留到历史记录。");
-    playSuccessSound();
-    getPwaRuntime()?.vibrate?.([120, 60, 120]);
-    sendBrowserNotification("Banana Pro 图片生成成功", "图片已经生成完成，可以回到页面查看和下载。");
-    startTitleFlash("生成成功");
-    renderCurrentResult(payload);
-    // Notify mobile tab system to switch to result
-    if (window.onMobileResultReady) window.onMobileResultReady();
-    await loadHistory(1);
-  } catch (error) {
-    clearProgress();
-    const message = error instanceof Error ? error.message : "生成失败";
-    setStatus(message, true);
-    playErrorSound();
-    getPwaRuntime()?.vibrate?.([180, 80, 180, 80, 180]);
-    sendBrowserNotification("Banana Pro 图片生成失败", message);
-    startTitleFlash("生成失败");
-    renderCurrentResult(state.currentResult);
-  } finally {
-    clearProgress();
-    setSubmitButtonLabel("开始生成");
-    setSubmitButtonsDisabled(false);
-    syncSubmitButtonState();
   }
+
+  clearProgress();
+  setSubmitButtonLabel(“开始生成”);
+  setSubmitButtonsDisabled(false);
+  syncSubmitButtonState();
 });
 
 refreshHistoryButton.addEventListener("click", () => {

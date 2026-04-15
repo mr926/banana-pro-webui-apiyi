@@ -1719,3 +1719,56 @@ button:focus-visible, .ghost-button:focus-visible,
     scroll-behavior: auto !important;
   }
 }
+
+/* ── 生成到成功为止 ─────────────────────────────── */
+.retry-until-success-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.retry-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-secondary, #555);
+  cursor: pointer;
+  user-select: none;
+}
+
+.retry-checkbox-label input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent, #ff6b35);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.retry-counter {
+  font-size: 12px;
+  color: var(--text-secondary, #888);
+  background: var(--surface-2, #f3f3f3);
+  border: 1px solid var(--border, #ddd);
+  border-radius: 20px;
+  padding: 2px 10px;
+  white-space: nowrap;
+  animation: retryPulse 1.2s ease-in-out infinite;
+}
+
+.retry-counter strong {
+  color: var(--accent, #ff6b35);
+  font-weight: 700;
+}
+
+@keyframes retryPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
+}
+
+.retry-until-success-row--mobile {
+  padding: 0 4px 6px;
+  justify-content: center;
+}

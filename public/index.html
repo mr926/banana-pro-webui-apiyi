@@ -269,6 +269,13 @@
           </section>
 
           <!-- Generate button & status -->
+          <div class="retry-until-success-row">
+            <label class="retry-checkbox-label">
+              <input type="checkbox" id="retry-until-success" />
+              <span>生成到成功为止</span>
+            </label>
+            <span id="retry-counter" class="retry-counter" style="display:none;">重试 <strong id="retry-count">0</strong> 次</span>
+          </div>
           <button type="submit" id="submit-button" class="primary-button">开始生成</button>
           <p id="form-status" class="form-status" style="padding:0 2px;"></p>
 
@@ -443,6 +450,13 @@
           </section>
 
           <div class="mobile-submit-bar">
+            <div class="retry-until-success-row retry-until-success-row--mobile">
+              <label class="retry-checkbox-label">
+                <input type="checkbox" id="retry-until-success-m" />
+                <span>生成到成功为止</span>
+              </label>
+              <span id="retry-counter-m" class="retry-counter" style="display:none;">重试 <strong id="retry-count-m">0</strong> 次</span>
+            </div>
             <p id="form-status-mobile" class="form-status"></p>
             <button type="submit" id="submit-button-mobile" class="primary-button">开始生成</button>
           </div>
