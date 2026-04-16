@@ -2201,8 +2201,20 @@ class AppHandler(BaseHTTPRequestHandler):
                 oss_image_key = uploaded["image_key"]
                 oss_thumb_key = uploaded["thumb_key"]
                 oss_metadata_key = uploaded["metadata_key"]
+
+                # OSS 上传成功后删除本地文件，只保留 OSS 上的副本
+                for local_file in (output_path, thumb_path):
+                    try:
+                        if local_file.exists():
+                            local_file.unlink()
+                    except OSError:
+                        pass
             except Exception as exc:
                 oss_error = str(exc)
+
+        # 如果 OSS 上传成功，imageUrl/thumbUrl 直接指向 OSS；否则保留本地路径
+        image_url_for_entry = oss_image_url if oss_image_url else f"/generated/{filename}"
+        thumb_url_for_entry = oss_thumb_url if oss_thumb_url else get_thumbnail_url(file_id)
 
         entry = {
             "id": file_id,
@@ -2219,8 +2231,8 @@ class AppHandler(BaseHTTPRequestHandler):
             "apiPlatformId": image_platform["platform_id"],
             "apiPlatformName": image_platform["platform_name"],
             "imageModel": image_platform["image_model"],
-            "imageUrl": f"/generated/{filename}",
-            "thumbUrl": get_thumbnail_url(file_id),
+            "imageUrl": image_url_for_entry,
+            "thumbUrl": thumb_url_for_entry,
             "downloadName": f"banana-pro-{file_id}{extension_for_mime(mime_type)}",
             "message": message,
         }
