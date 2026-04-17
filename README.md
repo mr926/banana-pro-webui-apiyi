@@ -1,77 +1,88 @@
 # Banana Pro 图生图 Web UI
 
-一个无需额外依赖的本地 Web UI，支持：
+基于 Gemini 图生图 API 的本地 Web UI，支持多平台、多参考图、AI 提示词优化和 OSS 存储。
 
-- 基础图必传
-- 最多 6 张参考图
-- 基础结构图超过 `4MB` 时自动压缩为 `JPG`，长边缩到 `4000px`，压缩率 `85%`
-- 风格参考图超过 `2MB` 时自动压缩到 `2MB` 以内
-- 图片比例可选，默认自动继承基础图比例
-- 生成大小支持 `1K / 2K / 4K`
-- 可选开启网络搜索增强
-- 提示词列表下拉选择，并支持弹窗管理
-- AI 翻译优化模式，支持选择和管理提示词优化技能，并会把当前基础图一起提交给优化模型理解需求
-- 多图会显式编号为 `##BASE## / ##REF1## / ##REF2##...`，可在提示词中按编号引用对应图片
-- 上传后可点击预览图左下角标签，把对应编号插入到提示词当前光标位置
-- 结果图直接下载
-- 本地保留历史图片和历史记录
-- 历史相册支持批量下载选中图片（优先 OSS，缺失时回退本地）
-- 支持安装为 Web App（PWA），不再维护 iOS / Android 原生客户端
-- 上传、下载、通知会根据桌面 / iPhone / Android 自动切换更合适的 Web 交互方式
+## 功能
 
-## 最近更新（2026-04）
+- 基础图必传，最多 6 张参考图
+- 基础图超过 `4MB` 自动压缩；参考图超过 `2MB` 自动压缩
+- 生成尺寸支持 `1K / 2K / 4K`，比例自动继承基础图或手动选择
+- 多图显式编号 `##BASE## / ##REF1##...`，可在提示词中按编号引用
+- AI 翻译优化：把基础图和提示词一起发给 LLM 优化后再生图
+- 提示词库下拉选择 + 弹窗管理（`data/prompt-library.md`）
+- 提示词优化技能管理（`data/skills/*.md`）
+- 历史相册，支持批量下载（优先 OSS，缺失时回退本地）
+- 支持 PWA 安装到桌面 / 主屏幕
+- 上传 / 下载 / 通知根据桌面 / iPhone / Android 自动适配
 
-- 移除 iOS / Android 原生端规划，统一收敛为 Web App / PWA 方案。
-- 新增 `app.webmanifest`、`sw.js` 和安装入口，支持把工作台安装到桌面 / 主屏幕。
-- 上传区新增“相册 / 文件”和“拍照”快捷入口；桌面端继续支持拖拽上传。
-- 单图下载和历史相册批量下载会根据平台自动切换：桌面端优先直接下载，移动端优先系统分享或单个 ZIP。
-- 完成通知改为优先走 Web App / Service Worker 通知，移动端可配合系统震动提醒。
-- 密码登录现在默认保持 `7 天`；服务端会把会话状态写入 `data/sessions.json`，容器重启后仍可继续保持登录。
-- `data/api-platforms.xml` 新增 `defaultModel` 属性，可为每个平台指定前台默认模型。
-- 首页布局做了简洁化重构，字号和按钮密度更紧凑，交互区更聚焦高频操作。
-- 首页“开始生成”按钮固定在左下角，不随滚动移动。
-- 首页“当前结果”和“历史图片”不再直接展示完整提示词，改为通过按钮复制完整提示词，界面更干净。
-- 历史相册卡片新增“复制提示词”按钮，可复制完整提示词内容。
-- 历史相册“下载选中 ZIP”已改为“批量下载选中”，优先走 OSS 签名下载链接，未命中 OSS 时回退本地下载。
-- 在以下图片上方新增悬浮快捷按钮，可一键发送到“基础结构图”或“风格参考图”：
-  - 首页当前结果图
-  - 首页历史缩略图
-  - 历史相册页面图片（点击后会跳回首页并自动导入）
-- 生成成功或失败时，浏览器标签页 `title` 会闪动提示；当页面重新被激活（可见且聚焦）后自动恢复默认标题。
+## Docker 部署
 
-## 本地启动
+直接使用 Docker Hub 镜像，无需本地构建。把下面的 `docker-compose.yml` 保存后按注释填写，运行 `docker compose up -d` 即可。
 
-```bash
-python3 server.py
+```yaml
+services:
+  banana-pro-ui:
+    image: mr926/banana-pro-webui-apiyi:latest
+    container_name: banana-pro-ui
+    ports:
+      - "8787:8787"          # 左边可改为你想要的宿主机端口
+    environment:
+
+      # ── 访问控制 ─────────────────────────────────────────────────────────
+      # 页面访问密码，留空则无密码保护；登录后保持 7 天
+      BANANA_PRO_UI_PASSWORD: "your_password"
+
+      # ── 服务监听 ─────────────────────────────────────────────────────────
+      # 容器内必须是 0.0.0.0，否则宿主机无法访问
+      BANANA_PRO_HOST: "0.0.0.0"
+      # 需与上方 ports 右侧端口一致
+      BANANA_PRO_PORT: "8787"
+
+      # ── AI 提示词优化（LLM）─────────────────────────────────────────────
+      # 用于"AI 翻译优化"功能的 API Key（优先级高于图片平台 key）
+      BANANA_PRO_LLM_API_KEY: "sk-xxxxxxxxxxxxxxxxxxxxxxxx"
+      # 兼容 OpenAI 格式的 LLM 接口地址
+      BANANA_PRO_LLM_API_URL: "https://api.apiyi.com/v1/chat/completions"
+      # LLM 模型名
+      BANANA_PRO_LLM_MODEL: "gpt-5.4"
+
+      # ── 图片生成平台（回退配置）─────────────────────────────────────────
+      # 优先读取 data/api-platforms.xml；以下仅在 XML 缺失或 key 为空时生效
+      BANANA_PRO_API_KEY: ""
+      BANANA_PRO_API_URL: "https://api.apiyi.com/v1beta/models/{model}:generateContent"
+      BANANA_PRO_IMAGE_MODEL: "gemini-3-pro-image-preview"
+
+      # ── 阿里云 OSS（可选）───────────────────────────────────────────────
+      # 改为 true 开启；生成成功后自动上传原图 + 缩略图到 OSS
+      BANANA_PRO_OSS_ENABLED: "false"
+      # OSS 地域 Endpoint（不含 bucket 前缀）
+      BANANA_PRO_OSS_ENDPOINT: "oss-cn-hangzhou.aliyuncs.com"
+      # Bucket 名称
+      BANANA_PRO_OSS_BUCKET: "my-bucket"
+      # 阿里云 AccessKey ID
+      BANANA_PRO_OSS_ACCESS_KEY_ID: "LTAI5tXxxxxxxxxxxxxxxxxx"
+      # 阿里云 AccessKey Secret
+      BANANA_PRO_OSS_ACCESS_KEY_SECRET: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      # 对象存储前缀目录，图片按 YYMM 子目录归档
+      BANANA_PRO_OSS_PREFIX: "banana-pro"
+      # 可选：绑定了 CDN / 自定义域名时填写，否则留空
+      BANANA_PRO_OSS_PUBLIC_BASE_URL: ""
+
+    volumes:
+      # 持久化历史记录、生成图片、平台配置和技能文件
+      - ./data:/app/data
+    restart: unless-stopped
 ```
 
-启动后访问：
+```bash
+docker compose up -d
+```
 
-[http://127.0.0.1:8787](http://127.0.0.1:8787)
-
-## Web App / PWA
-
-当前项目只保留 Web 应用形态，不再维护 `iOS` / `Android` 原生客户端目录。
-
-建议用法：
-
-- `桌面浏览器`：直接打开页面，适合拖拽上传、快速调参和高频下载。
-- `iPhone / iPad`：推荐用 Safari 打开后“添加到主屏幕”，上传、保存和完成提醒会更稳定。
-- `Android`：推荐安装到主屏幕，拍照上传、系统分享和完成通知体验更接近 App。
-
-当前分平台策略：
-
-- `上传`：桌面端支持点击上传和拖拽；移动端提供“相册 / 文件”与“拍照”快捷入口。
-- `下载`：桌面端优先直接下载；移动端单图优先系统分享 / 保存，历史相册批量操作优先打包 ZIP。
-- `通知`：支持浏览器完成通知、标签标题闪动和声音提示；安装为 Web App 后提醒更稳定。
+访问：[http://127.0.0.1:8787](http://127.0.0.1:8787)
 
 ## 生成图平台配置
 
-生成图相关的 `BANANA_PRO_API_URL`、`BANANA_PRO_IMAGE_MODEL` 和 `BANANA_PRO_API_KEY` 已独立到 [data/api-platforms.xml](./data/api-platforms.xml)。
-
-一个平台对应一个 `url` 和一个 `key`，`models` 里可以用符号分隔多个模型；前台会在“图生图工作台”标题下自动显示“API 平台”和“生成模型”两个选择器。可选的 `defaultModel` 用来指定该平台在前台默认选中的模型。
-
-默认示例：
+图片平台的 `url`、`key`、`models` 推荐在 `data/api-platforms.xml` 中配置，支持多平台切换：
 
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
@@ -84,210 +95,26 @@ python3 server.py
 </apiPlatforms>
 ```
 
-如果你有多个 API 平台，直接复制一个 `<platform>` 节点即可。
-如果设置了 `defaultModel` 且它存在于 `models` 列表中，前台会优先选中它；未设置或不匹配时会回退到 `models` 的第一项。
-如果仓库是公开的，建议提交前保持 `<key></key>` 为空，把真实 key 放在本地 `.env` / `.env.docker` 中。
+多个平台直接复制 `<platform>` 节点。`key` 建议在本地填写，不要提交到仓库。
 
-## 环境变量
+## 提示词与技能
 
-默认从项目根目录 `.env` 读取：
+- **提示词库**：`data/prompt-library.md`，一行一条，在页面"管理提示词"弹窗中编辑
+- **优化技能**：`data/skills/*.md`，在"AI 翻译优化"→"管理"弹窗中上传 / 编辑 / 删除
 
-- `BANANA_PRO_UI_PASSWORD`
-- `BANANA_PRO_LLM_API_KEY`
-- `BANANA_PRO_LLM_API_URL`
-- `BANANA_PRO_LLM_MODEL`
-- `BANANA_PRO_HOST`
-- `BANANA_PRO_PORT`
-- `BANANA_PRO_OSS_ENABLED`
-- `BANANA_PRO_OSS_ENDPOINT`
-- `BANANA_PRO_OSS_BUCKET`
-- `BANANA_PRO_OSS_ACCESS_KEY_ID`
-- `BANANA_PRO_OSS_ACCESS_KEY_SECRET`
-- `BANANA_PRO_OSS_PREFIX`
-- `BANANA_PRO_OSS_PUBLIC_BASE_URL`
+技能文件格式：
 
-也可以直接通过环境变量传入，环境变量优先级高于 `.env`。
-
-如果设置了 `BANANA_PRO_UI_PASSWORD`，页面会先要求输入访问密码；不设置则保持无密码访问。
-登录成功后会默认保持 `7 天`；服务端会把会话状态保存到 `data/sessions.json`，该文件属于运行时数据，不建议提交到仓库。
-如果设置了 `BANANA_PRO_LLM_API_KEY`，AI 翻译优化会优先使用它；未设置时会回退到默认图片平台的 key，兼容旧版时也会继续回退到 `BANANA_PRO_API_KEY`。
-`BANANA_PRO_LLM_API_URL` 用于单独配置提示词优化所使用的 LLM 接口地址，默认值为 `https://api.apiyi.com/v1/chat/completions`。
-`BANANA_PRO_LLM_MODEL` 用于单独配置提示词优化所使用的模型名，默认值为 `gpt-5.4`。
-`BANANA_PRO_API_URL`、`BANANA_PRO_IMAGE_MODEL` 和 `BANANA_PRO_API_KEY` 仍保留为兼容旧配置和首次生成默认 XML 的回退项，但日常推荐直接编辑 `data/api-platforms.xml`。
-
-推荐先复制示例文件：
-
-```bash
-cp .env.example .env
 ```
-
-建议把真实 key 只保留在你本地 `.env` / `.env.docker` 中，仓库里的示例文件保持空值。
-
-默认示例内容如下：
-
-```env
-# 生成图平台优先从 data/api-platforms.xml 读取。
-# 以下 3 项仅在 XML 文件缺失或对应节点留空时作为回退。
-BANANA_PRO_API_URL=https://api.apiyi.com/v1beta/models/{model}:generateContent
-BANANA_PRO_IMAGE_MODEL=gemini-3-pro-image-preview
-BANANA_PRO_API_KEY=
-BANANA_PRO_UI_PASSWORD=
-BANANA_PRO_LLM_API_KEY=
-BANANA_PRO_LLM_API_URL=https://api.apiyi.com/v1/chat/completions
-BANANA_PRO_LLM_MODEL=gpt-5.4
-BANANA_PRO_HOST=127.0.0.1
-BANANA_PRO_PORT=8787
-BANANA_PRO_OSS_ENABLED=false
-BANANA_PRO_OSS_ENDPOINT=oss-cn-hangzhou.aliyuncs.com
-BANANA_PRO_OSS_BUCKET=
-BANANA_PRO_OSS_ACCESS_KEY_ID=
-BANANA_PRO_OSS_ACCESS_KEY_SECRET=
-BANANA_PRO_OSS_PREFIX=banana-pro
-BANANA_PRO_OSS_PUBLIC_BASE_URL=
-```
-
-### 阿里云 OSS（可选）
-
-开启后，服务端会在每次生成成功后，把“原图 + 缩略图”上传到 OSS，并在历史记录里额外写入：
-
-- `ossImageUrl`
-- `ossThumbUrl`
-- `ossImageKey`
-- `ossThumbKey`
-- `ossMetadataXmlUrl`
-- `ossMetadataXmlKey`
-
-默认仍保留本地文件和本地 `imageUrl` / `thumbUrl`，不会影响现有页面与历史管理逻辑。
-OSS 对象会按 `YYMM` 文件夹归类：主图在 `YYMM/...`，参数 XML 在 `YYMM/XML/...`（缩略图在 `YYMM/thumbs/...`）；删除历史记录时仅删除本地文件，不删除 OSS 对象。
-当 OSS 上传失败时，生成流程仍返回成功，错误信息会记录在 `ossUploadError` 字段中。
-
-关键配置说明：
-
-- `BANANA_PRO_OSS_ENABLED=true`：启用 OSS 上传。
-- `BANANA_PRO_OSS_ENDPOINT`：例如 `oss-cn-hangzhou.aliyuncs.com`。
-- `BANANA_PRO_OSS_BUCKET`：Bucket 名称。
-- `BANANA_PRO_OSS_ACCESS_KEY_ID` / `BANANA_PRO_OSS_ACCESS_KEY_SECRET`：访问凭证。
-- `BANANA_PRO_OSS_PREFIX`：对象前缀目录，例如 `banana-pro`。
-- `BANANA_PRO_OSS_PUBLIC_BASE_URL`：可选；若你绑定了 CDN / 自定义域名，可在这里填公开访问前缀。
-
-## 提示词与技能管理
-
-### 提示词列表
-
-页面中的“管理提示词”按钮会打开弹窗，内容保存到：
-
-- `data/prompt-library.md`
-
-文件规则：
-
-- 一行对应一个下拉列表选项
-- 空行会被忽略
-
-### 提示词优化技能
-
-“AI 翻译优化”区域中的“管理”按钮会打开技能管理弹窗，支持：
-
-- 上传新的 `.md` 技能文件
-- 编辑已有 `.md` 技能文件
-- 删除已有 `.md` 技能文件
-
-技能文件默认保存在：
-
-- `data/skills/*.md`
-
-兼容说明：
-
-- 旧版 `data/personas/*.md` 仍会自动读取和兼容
-- 新建技能默认会写入 `data/skills/*.md`
-
-每个技能文件格式为：
-
-```md
 第一行：技能名称
 第二行：一句简介
-第三行开始：技能正文 / system prompt
+第三行起：技能正文 / system prompt
 ```
 
-## Docker 启动
-
-先编辑 `data/api-platforms.xml`，把图片平台的 `url`、`key` 和 `models` 配好。然后再准备其余环境变量：
+## 本地启动
 
 ```bash
-export BANANA_PRO_LLM_API_KEY="你的_llm_api_key"
-export BANANA_PRO_LLM_API_URL="https://api.apiyi.com/v1/chat/completions"
-export BANANA_PRO_LLM_MODEL="gpt-5.4"
-export BANANA_PRO_UI_PASSWORD=""
-export BANANA_PRO_HOST="0.0.0.0"
-export BANANA_PRO_PORT="8787"
-export BANANA_PRO_OSS_ENABLED="false"
-export BANANA_PRO_OSS_ENDPOINT="oss-cn-hangzhou.aliyuncs.com"
-export BANANA_PRO_OSS_BUCKET="your_bucket_name"
-export BANANA_PRO_OSS_ACCESS_KEY_ID="your_access_key_id"
-export BANANA_PRO_OSS_ACCESS_KEY_SECRET="your_access_key_secret"
-export BANANA_PRO_OSS_PREFIX="banana-pro"
-export BANANA_PRO_OSS_PUBLIC_BASE_URL=""
-docker compose up -d --build
+cp .env.example .env   # 按需填写 .env
+python3 server.py
 ```
 
-也可以直接复制一份 Docker 专用环境文件：
-
-```bash
-cp .env.docker.example .env.docker
-```
-
-然后把 `.env.docker` 里的 `BANANA_PRO_LLM_API_KEY`、`BANANA_PRO_LLM_API_URL` 和 `BANANA_PRO_LLM_MODEL` 按需改成你自己的；如果不需要访问密码，可以保持 `BANANA_PRO_UI_PASSWORD=` 为空。图片生成平台仍然直接改 `data/api-platforms.xml`。`.env.docker` 建议只作为本地私有文件使用，不要提交到仓库。再启动：
-
-```bash
-docker compose --env-file .env.docker up -d --build
-```
-
-启动后访问：
-
-[http://127.0.0.1:8787](http://127.0.0.1:8787)
-
-停止：
-
-```bash
-docker compose down
-```
-
-如果你更喜欢单独 `docker build` / `docker run`，也可以：
-
-```bash
-docker build -t banana-pro-ui .
-docker run -d \
-  --name banana-pro-ui \
-  -p 8787:8787 \
-  -e BANANA_PRO_LLM_API_KEY="你的_llm_api_key" \
-  -e BANANA_PRO_LLM_API_URL="https://api.apiyi.com/v1/chat/completions" \
-  -e BANANA_PRO_LLM_MODEL="gpt-5.4" \
-  -e BANANA_PRO_UI_PASSWORD="" \
-  -e BANANA_PRO_HOST="0.0.0.0" \
-  -e BANANA_PRO_PORT="8787" \
-  -v "$(pwd)/data:/app/data" \
-  banana-pro-ui
-```
-
-## GitHub 自动推送到 Docker Hub
-
-项目已包含 GitHub Actions 工作流文件：[.github/workflows/docker.yml](./.github/workflows/docker.yml)。
-
-当代码推送到 `main` 分支时，GitHub 会自动构建镜像并推送到 Docker Hub 仓库 `mr926/banana-pro-webui-apiyi`。
-
-## 目录说明
-
-- `server.py`: 本地服务和 API 代理
-- `public/`: 前端页面
-- `public/app.webmanifest`: Web App / PWA 清单
-- `public/sw.js`: Service Worker，负责壳资源缓存和通知点击回流
-- `public/pwa.js`: Web App 运行时，处理安装、平台识别、通知和下载策略
-- `data/generated/`: 生成后的图片文件
-- `data/history.json`: 历史记录
-- `data/prompt-library.md`: 提示词列表，一行一条
-- `data/skills/`: 提示词优化技能 `.md` 文件目录
-- `data/personas/`: 旧版提示词优化人格目录，继续兼容读取
-- `Dockerfile`: Docker 镜像构建文件
-- `docker-compose.yml`: Docker Compose 启动配置
-- `.env.example`: 本地环境变量示例
-- `.env.docker.example`: Docker 环境变量示例
-- `.github/workflows/docker.yml`: 自动构建并推送 Docker Hub 的 GitHub Actions 工作流
+访问：[http://127.0.0.1:8787](http://127.0.0.1:8787)

@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <apiPlatforms version="1">
-  <!-- 提交到公开仓库前建议保持 <key></key> 为空；运行时会自动回退到本地环境变量中的 BANANA_PRO_API_KEY。 -->
-  <platform id="apiyi" name="APIYI" default="true" defaultModel="gemini-3-pro-image-preview">
+  <platform id="Grsai" name="Grsai" default="true"  defaultModel="nano-banana-pro">
+    <url>https://grsai.dakka.com.cn/v1beta/models/{model}:generateContent</url>
+    <key>sk-d3646943df7a4c449210f926649a2308</key>
+    <models separator="|">nano-banana-pro|nano-banana-pro-vt|nano-banana-pro-cl|nano-banana-pro-vip|nano-banana-pro-4k-vip|nano-banana-2</models>
+  </platform>
+  <platform id="apiyi" name="APIYI">
     <url>https://api.apiyi.com/v1beta/models/{model}:generateContent</url>
-    <key></key>
+    <key>sk-nOfIuTi3Q0IntgMf26117cD1859e44A7825f20D7F0A1D16d</key>
     <models separator="|">gemini-3-pro-image-preview|gemini-3.1-flash-image-preview-4k</models>
   </platform>
   <!--
@@ -12,7 +16,7 @@
 
   <platform id="another-provider" name="Another Provider">
     <url>https://grsai.dakka.com.cn/v1beta/models/{model}:generateContent</url>
-    <key></key>
+    <key>sk-d3646943df7a4c449210f926649a2308</key>
     <models separator="|">nano-banana-pro|nano-banana-2</models>
   </platform>
   -->
