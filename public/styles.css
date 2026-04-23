@@ -1646,6 +1646,12 @@ textarea { max-height: 180px; }
 
 .album-image-wrap { position: relative; }
 
+.album-image-wrap .media-status-badge {
+  top: auto;
+  bottom: 8px;
+  left: 8px;
+}
+
 .album-image-wrap.is-upload-pending {
   min-height: 170px;
   display: grid;
