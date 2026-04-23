@@ -123,6 +123,53 @@ body { padding-top: 48px; }
   letter-spacing: -0.02em;
 }
 
+.mode-select {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+  background: transparent;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  font-family: inherit;
+}
+
+.mode-select:focus {
+  outline: none;
+}
+
+.upscale-progress-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.upscale-tile-progress {
+  display: grid;
+  grid-template-columns: 80px 1fr 40px;
+  align-items: center;
+  gap: 8px;
+}
+
+.upscale-tile-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.upscale-tile-pct {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+
+
 .header-pro-badge {
   display: inline-flex;
   align-items: center;
@@ -871,6 +918,34 @@ textarea { max-height: 180px; }
   font-size: 10px;
 }
 
+.meta-pill-status.is-info,
+.media-status-badge.is-info {
+  background: rgba(45, 125, 204, 0.12);
+  color: #1f5d97;
+  border-color: rgba(45, 125, 204, 0.22);
+}
+
+.meta-pill-status.is-warning,
+.media-status-badge.is-warning {
+  background: rgba(191, 118, 20, 0.12);
+  color: #9a5d0f;
+  border-color: rgba(191, 118, 20, 0.22);
+}
+
+.meta-pill-status.is-success,
+.media-status-badge.is-success {
+  background: rgba(50, 133, 74, 0.12);
+  color: #2d7a43;
+  border-color: rgba(50, 133, 74, 0.22);
+}
+
+.meta-pill-status.is-danger,
+.media-status-badge.is-danger {
+  background: rgba(190, 64, 64, 0.12);
+  color: #a33535;
+  border-color: rgba(190, 64, 64, 0.22);
+}
+
 .result-stage {
   flex: 1;
   min-height: 300px;
@@ -913,6 +988,13 @@ textarea { max-height: 180px; }
 .result-image-shell {
   position: relative;
   background: var(--surface-inset);
+}
+
+.result-image-shell.is-upload-pending {
+  min-height: 320px;
+  display: grid;
+  place-items: center;
+  padding: 20px;
 }
 
 .image-transfer-actions {
@@ -1068,6 +1150,94 @@ textarea { max-height: 180px; }
   aspect-ratio: 4/3;
   background: var(--surface-inset);
   overflow: hidden;
+}
+
+.media-status-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(8px);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+}
+
+.media-upload-placeholder {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  padding: 24px 18px;
+  text-align: center;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.56), rgba(255,255,255,0.72)),
+    repeating-linear-gradient(
+      -45deg,
+      rgba(148, 163, 184, 0.08) 0,
+      rgba(148, 163, 184, 0.08) 10px,
+      rgba(148, 163, 184, 0.02) 10px,
+      rgba(148, 163, 184, 0.02) 20px
+    );
+}
+
+.media-upload-placeholder.is-compact {
+  padding: 18px 12px;
+  gap: 6px;
+}
+
+.media-upload-placeholder-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--text-secondary);
+  font-size: 18px;
+}
+
+.media-upload-placeholder h3 {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.media-upload-placeholder p {
+  margin: 0;
+  max-width: 340px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.media-upload-placeholder.is-compact h3 {
+  font-size: 12px;
+}
+
+.media-upload-placeholder.is-compact p {
+  font-size: 11px;
+  max-width: 220px;
+}
+
+.history-gallery-thumb.is-upload-pending .media-upload-placeholder,
+.album-image-wrap.is-upload-pending .media-upload-placeholder {
+  position: absolute;
+  inset: 0;
+}
+
+.history-gallery-thumb.is-upload-pending .image-transfer-actions,
+.album-image-wrap.is-upload-pending .image-transfer-actions {
+  display: none;
 }
 
 .history-gallery-thumb img {
@@ -1475,6 +1645,19 @@ textarea { max-height: 180px; }
 }
 
 .album-image-wrap { position: relative; }
+
+.album-image-wrap.is-upload-pending {
+  min-height: 170px;
+  display: grid;
+  place-items: stretch;
+  background: var(--surface-inset);
+}
+
+.ghost-button.is-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
 
 .album-info { padding: 9px 10px; }
 

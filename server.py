@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -24,7 +25,8 @@ from email.utils import formatdate
 from http import client as http_client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from queue import Queue
+from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlparse, urlunparse
 
 try:
@@ -79,6 +81,13 @@ SESSION_MAX_AGE = 7 * 24 * 3600  # 7 days in seconds
 # SESSIONS: token -> expiry timestamp (float). Persisted to data/sessions.json.
 SESSIONS: Dict[str, float] = {}
 SESSIONS_FILE = DATA_DIR / "sessions.json"
+HISTORY_LOCK = threading.RLock()
+OSS_UPLOAD_QUEUE: "Queue[str]" = Queue()
+OSS_UPLOAD_QUEUE_IDS: Set[str] = set()
+OSS_UPLOAD_QUEUE_LOCK = threading.Lock()
+OSS_UPLOAD_WORKER: Optional[threading.Thread] = None
+OSS_UPLOAD_MAX_ATTEMPTS = 3
+OSS_UPLOAD_RETRY_BASE_DELAY_SECONDS = 5
 
 
 def load_sessions() -> None:
@@ -99,10 +108,17 @@ def save_sessions() -> None:
         SESSIONS_FILE.write_text(json.dumps(SESSIONS), encoding="utf-8")
     except Exception:
         pass
+
+
 THUMB_MAX_EDGE = 480
 THUMB_JPEG_QUALITY = 72
 DEFAULT_HISTORY_PAGE_SIZE = 60
 MAX_HISTORY_PAGE_SIZE = 200
+
+
+def log_runtime(message: str) -> None:
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}", flush=True)
 
 
 def ensure_dirs() -> None:
@@ -715,24 +731,72 @@ def build_generation_metadata_xml(
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
-def read_history() -> List[dict]:
+def read_history_unlocked() -> List[dict]:
     try:
         return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
 
 
-def write_history(items: List[dict]) -> None:
+def write_history_unlocked(items: List[dict]) -> None:
     HISTORY_FILE.write_text(
         json.dumps(items, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
 
+def read_history() -> List[dict]:
+    with HISTORY_LOCK:
+        return read_history_unlocked()
+
+
+def write_history(items: List[dict]) -> None:
+    with HISTORY_LOCK:
+        write_history_unlocked(items)
+
+
 def append_history(entry: dict) -> None:
-    history = read_history()
-    history.insert(0, entry)
-    write_history(history)
+    with HISTORY_LOCK:
+        history = read_history_unlocked()
+        history.insert(0, entry)
+        write_history_unlocked(history)
+
+
+def get_history_entry(item_id: str) -> Optional[dict]:
+    normalized_id = str(item_id or "").strip()
+    if not normalized_id:
+        return None
+
+    with HISTORY_LOCK:
+        for item in read_history_unlocked():
+            if str(item.get("id", "")).strip() == normalized_id:
+                return dict(item)
+    return None
+
+
+def update_history_entry(
+    item_id: str,
+    updates: dict,
+    *,
+    remove_keys: Optional[List[str]] = None,
+) -> Optional[dict]:
+    normalized_id = str(item_id or "").strip()
+    if not normalized_id:
+        return None
+
+    with HISTORY_LOCK:
+        history = read_history_unlocked()
+        for index, item in enumerate(history):
+            if str(item.get("id", "")).strip() != normalized_id:
+                continue
+            updated = dict(item)
+            for key in remove_keys or []:
+                updated.pop(key, None)
+            updated.update(updates)
+            history[index] = updated
+            write_history_unlocked(history)
+            return updated
+    return None
 
 
 def parse_positive_int(
@@ -776,6 +840,265 @@ def resolve_generated_path(image_url: str) -> Optional[Path]:
     except ValueError:
         return None
     return target
+
+
+def get_local_image_cache_path(entry: dict) -> Optional[Path]:
+    path = resolve_generated_path(str(entry.get("localImageUrl", "")).strip())
+    if path is not None:
+        return path
+    return resolve_generated_path(str(entry.get("imageUrl", "")).strip())
+
+
+def get_local_thumb_cache_path(entry: dict) -> Optional[Path]:
+    path = resolve_generated_path(str(entry.get("localThumbUrl", "")).strip())
+    if path is not None:
+        return path
+
+    path = resolve_generated_path(str(entry.get("thumbUrl", "")).strip())
+    if path is not None:
+        return path
+
+    item_id = str(entry.get("id", "")).strip()
+    return get_thumbnail_path(item_id) if item_id else None
+
+
+def remove_local_cache_files(paths: List[Optional[Path]]) -> None:
+    for path in paths:
+        if path is None:
+            continue
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError:
+            continue
+
+
+def parse_history_created_at(entry: dict) -> datetime:
+    raw_value = str(entry.get("createdAt", "")).strip()
+    if raw_value:
+        try:
+            return datetime.fromisoformat(raw_value)
+        except ValueError:
+            pass
+    return datetime.now()
+
+
+def build_history_metadata_payload(entry: dict, image_mime_type: str) -> Tuple[str, bytes]:
+    item_id = str(entry.get("id", "")).strip()
+    if not item_id:
+        raise RuntimeError("历史记录缺少图片 id，无法生成 OSS 元数据。")
+
+    reference_count_raw = entry.get("referenceCount", 0)
+    try:
+        reference_count = max(0, int(reference_count_raw))
+    except (TypeError, ValueError):
+        reference_count = 0
+
+    created_at = parse_history_created_at(entry)
+    metadata_filename = f"{item_id}.xml"
+    metadata_bytes = build_generation_metadata_xml(
+        file_id=item_id,
+        created_at=created_at,
+        prompt=str(entry.get("prompt", "") or ""),
+        source_prompt=str(entry.get("sourcePrompt", "") or entry.get("prompt", "") or ""),
+        prompt_mode=str(entry.get("promptMode", "") or "default"),
+        aspect_ratio=str(entry.get("aspectRatio", "") or "1:1"),
+        image_size=str(entry.get("imageSize", "") or "4K"),
+        enable_search=bool(entry.get("enableSearch", False)),
+        base_image_name=str(entry.get("baseImageName", "") or ""),
+        base_image_sha256=str(entry.get("baseImageSha256", "") or ""),
+        reference_count=reference_count,
+        api_platform_id=str(entry.get("apiPlatformId", "") or ""),
+        api_platform_name=str(entry.get("apiPlatformName", "") or ""),
+        image_model=str(entry.get("imageModel", "") or ""),
+        mime_type=image_mime_type,
+    )
+    return metadata_filename, metadata_bytes
+
+
+def enqueue_oss_upload(item_id: str) -> bool:
+    normalized_id = str(item_id or "").strip()
+    if not normalized_id:
+        return False
+
+    with OSS_UPLOAD_QUEUE_LOCK:
+        if normalized_id in OSS_UPLOAD_QUEUE_IDS:
+            return False
+        OSS_UPLOAD_QUEUE_IDS.add(normalized_id)
+
+    OSS_UPLOAD_QUEUE.put(normalized_id)
+    return True
+
+
+def clear_oss_upload_queue_marker(item_id: str) -> None:
+    with OSS_UPLOAD_QUEUE_LOCK:
+        OSS_UPLOAD_QUEUE_IDS.discard(str(item_id or "").strip())
+
+
+def process_oss_upload_queue_item(item_id: str) -> None:
+    entry = get_history_entry(item_id)
+    if entry is None:
+        return
+    if entry.get("ossImageUrl") and entry.get("ossThumbUrl"):
+        update_history_entry(item_id, {"ossUploadStatus": "uploaded"}, remove_keys=["ossUploadError"])
+        return
+
+    image_path = get_local_image_cache_path(entry)
+    thumb_path = get_local_thumb_cache_path(entry)
+    if image_path is None or not image_path.exists():
+        update_history_entry(
+            item_id,
+            {
+                "ossUploadStatus": "failed",
+                "ossUploadError": "本地原图不存在，无法上传到 OSS。",
+            },
+        )
+        return
+    if thumb_path is None or not thumb_path.exists():
+        update_history_entry(
+            item_id,
+            {
+                "ossUploadStatus": "failed",
+                "ossUploadError": "本地缩略图不存在，无法上传到 OSS。",
+            },
+        )
+        return
+
+    image_mime_type = str(entry.get("mimeType", "")).strip()
+    if not image_mime_type:
+        guessed_mime_type, _ = mimetypes.guess_type(image_path.name)
+        image_mime_type = guessed_mime_type or "application/octet-stream"
+
+    metadata_filename, metadata_bytes = build_history_metadata_payload(entry, image_mime_type)
+    oss_config = get_oss_config()
+    last_error = ""
+
+    for attempt in range(1, OSS_UPLOAD_MAX_ATTEMPTS + 1):
+        update_history_entry(
+            item_id,
+            {
+                "ossUploadStatus": "uploading",
+                "ossUploadAttempts": attempt,
+                "ossLastUploadAttemptAt": datetime.now().isoformat(timespec="seconds"),
+            },
+            remove_keys=["ossUploadError"],
+        )
+
+        try:
+            uploaded = upload_generated_assets_to_oss(
+                config=oss_config,
+                now=parse_history_created_at(entry),
+                image_filename=image_path.name,
+                image_bytes=image_path.read_bytes(),
+                image_mime_type=image_mime_type,
+                thumb_filename=thumb_path.name,
+                thumb_bytes=thumb_path.read_bytes(),
+                metadata_filename=metadata_filename,
+                metadata_bytes=metadata_bytes,
+            )
+            update_history_entry(
+                item_id,
+                {
+                    "imageUrl": uploaded["image_url"],
+                    "thumbUrl": uploaded["thumb_url"],
+                    "ossImageUrl": uploaded["image_url"],
+                    "ossThumbUrl": uploaded["thumb_url"],
+                    "ossMetadataXmlUrl": uploaded["metadata_url"],
+                    "ossImageKey": uploaded["image_key"],
+                    "ossThumbKey": uploaded["thumb_key"],
+                    "ossMetadataXmlKey": uploaded["metadata_key"],
+                    "ossUploadStatus": "uploaded",
+                    "ossUploadCompletedAt": datetime.now().isoformat(timespec="seconds"),
+                },
+                remove_keys=["ossUploadError"],
+            )
+            remove_local_cache_files([image_path, thumb_path])
+            log_runtime(f"OSS 上传完成：{item_id}")
+            return
+        except Exception as exc:
+            last_error = str(exc)
+            update_history_entry(
+                item_id,
+                {
+                    "ossUploadStatus": "retrying" if attempt < OSS_UPLOAD_MAX_ATTEMPTS else "failed",
+                    "ossUploadAttempts": attempt,
+                    "ossUploadError": last_error,
+                    "ossLastUploadAttemptAt": datetime.now().isoformat(timespec="seconds"),
+                },
+            )
+            if attempt < OSS_UPLOAD_MAX_ATTEMPTS:
+                delay_seconds = OSS_UPLOAD_RETRY_BASE_DELAY_SECONDS * attempt
+                log_runtime(
+                    f"OSS 上传失败，准备重试（{item_id}，第 {attempt} 次）：{last_error}"
+                )
+                time.sleep(delay_seconds)
+
+    log_runtime(f"OSS 上传最终失败：{item_id}，原因：{last_error}")
+
+
+def oss_upload_worker_main() -> None:
+    log_runtime("OSS 上传队列已启动，当前并发数为 1。")
+    while True:
+        item_id = OSS_UPLOAD_QUEUE.get()
+        try:
+            process_oss_upload_queue_item(item_id)
+        except Exception as exc:
+            update_history_entry(
+                item_id,
+                {
+                    "ossUploadStatus": "failed",
+                    "ossUploadError": str(exc),
+                    "ossLastUploadAttemptAt": datetime.now().isoformat(timespec="seconds"),
+                },
+            )
+            log_runtime(f"OSS 上传队列任务异常：{item_id}，原因：{exc}")
+        finally:
+            clear_oss_upload_queue_marker(item_id)
+            OSS_UPLOAD_QUEUE.task_done()
+
+
+def start_oss_upload_worker() -> None:
+    global OSS_UPLOAD_WORKER
+
+    with OSS_UPLOAD_QUEUE_LOCK:
+        if OSS_UPLOAD_WORKER is not None and OSS_UPLOAD_WORKER.is_alive():
+            return
+        OSS_UPLOAD_WORKER = threading.Thread(
+            target=oss_upload_worker_main,
+            name="banana-oss-upload-worker",
+            daemon=True,
+        )
+        OSS_UPLOAD_WORKER.start()
+
+
+def recover_pending_oss_uploads() -> None:
+    try:
+        oss_config = get_oss_config()
+    except RuntimeError as exc:
+        log_runtime(f"OSS 上传队列未启动：{exc}")
+        return
+
+    if not oss_config:
+        return
+
+    start_oss_upload_worker()
+    recovered = 0
+    for entry in read_history():
+        if not isinstance(entry, dict):
+            continue
+        status = str(entry.get("ossUploadStatus", "")).strip().lower()
+        if status not in {"queued", "uploading", "retrying"}:
+            continue
+        item_id = str(entry.get("id", "")).strip()
+        if not item_id:
+            continue
+        if get_local_image_cache_path(entry) is None:
+            continue
+        if enqueue_oss_upload(item_id):
+            recovered += 1
+
+    if recovered > 0:
+        log_runtime(f"已恢复 {recovered} 个待处理的 OSS 上传任务。")
 
 
 def build_thumbnail(source_path: Path, thumb_path: Path) -> None:
@@ -970,20 +1293,21 @@ def build_history_response_payload(query_string: str = "") -> dict:
 
 
 def delete_history_item(item_id: str) -> Optional[dict]:
-    history = read_history()
-    remaining: List[dict] = []
-    removed: Optional[dict] = None
-    for item in history:
-        if item.get("id") == item_id and removed is None:
-            removed = item
-            continue
-        remaining.append(item)
+    with HISTORY_LOCK:
+        history = read_history_unlocked()
+        remaining: List[dict] = []
+        removed: Optional[dict] = None
+        for item in history:
+            if item.get("id") == item_id and removed is None:
+                removed = item
+                continue
+            remaining.append(item)
 
-    if removed is None:
-        return None
+        if removed is None:
+            return None
 
-    write_history(remaining)
-    return removed
+        write_history_unlocked(remaining)
+        return removed
 
 
 def read_prompt_library_content() -> str:
@@ -1258,19 +1582,24 @@ def resolve_image_generation_api_url(api_url: str, image_model: str) -> str:
     return configured_url
 
 
-def build_prompt(user_prompt: str, reference_count: int) -> str:
-    base = (
-        "你将收到一张基础结构图作为主要约束，它的图片编号固定为 ##BASE##。"
-        "请严格保留 ##BASE## 对应图片中的主体构图、空间关系和关键结构。"
-    )
+def build_prompt(user_prompt: str, reference_count: int, has_base_image: bool = True) -> str:
+    if has_base_image:
+        base = (
+            "你将收到一张基础结构图作为主要约束，它的图片编号固定为 ##BASE##。"
+            "请严格保留 ##BASE## 对应图片中的主体构图、空间关系和关键结构。"
+        )
+    else:
+        base = "请根据下方提示词生成一张高质量图片，不受基础结构图约束。"
     if reference_count > 0:
         base += (
             f"另外还会提供 {reference_count} 张参考图，它们会按上传顺序编号为 ##REF1## 到 ##REF{reference_count}##。"
             "这些参考图只用于借鉴风格、材质、灯光、色彩和氛围，不要直接复制参考图中的具体主体内容。"
         )
     else:
-        base += "没有提供风格参考图时，请根据提示词自行补足材质、光线与氛围。"
-    base += "如果用户提示词里提到 ##BASE##、##REF1##、##REF2## 等编号，请严格按这些编号去对应图片。"
+        if has_base_image:
+            base += "没有提供风格参考图时，请根据提示词自行补足材质、光线与氛围。"
+    if has_base_image:
+        base += "如果用户提示词里提到 ##BASE##、##REF1##、##REF2## 等编号，请严格按这些编号去对应图片。"
 
     if user_prompt.strip():
         base += f"\n\n用户提示词：{user_prompt.strip()}"
@@ -1281,22 +1610,26 @@ def build_prompt(user_prompt: str, reference_count: int) -> str:
 
 def build_payload(
     prompt: str,
-    base_image: dict,
+    base_image: Optional[dict],
     reference_images: List[dict],
     aspect_ratio: str,
     image_size: str,
     enable_search: bool,
 ) -> dict:
     parts = [
-        {"text": build_prompt(prompt, len(reference_images))},
-        {"text": "图片编号 ##BASE##。这张图是基础结构图，请以它为核心，并严格保留它的主体结构。"},
-        {
-            "inlineData": {
-                "mimeType": base_image["mime_type"],
-                "data": base_image["base64"],
-            }
-        }
+        {"text": build_prompt(prompt, len(reference_images), has_base_image=bool(base_image))},
     ]
+
+    if base_image:
+        parts.append({"text": "图片编号 ##BASE##。这张图是基础结构图，请以它为核心，并严格保留它的主体结构。"})
+        parts.append(
+            {
+                "inlineData": {
+                    "mimeType": base_image["mime_type"],
+                    "data": base_image["base64"],
+                }
+            }
+        )
 
     for index, image in enumerate(reference_images, start=1):
         parts.append(
@@ -1899,6 +2232,51 @@ class AppHandler(BaseHTTPRequestHandler):
                 return
             return self.handle_create_prompt_skill()
 
+        if parsed.path == "/api/stitch-tiles":
+            if not self.ensure_authenticated():
+                return
+            try:
+                return self.handle_stitch_tiles()
+            except Exception as exc:
+                return json_response(
+                    self,
+                    500,
+                    {
+                        "error": "服务端拼合宫格时发生异常。",
+                        "details": str(exc),
+                    },
+                )
+
+        if parsed.path == "/api/upscale-tile":
+            if not self.ensure_authenticated():
+                return
+            try:
+                return self.handle_upscale_tile()
+            except Exception as exc:
+                return json_response(
+                    self,
+                    500,
+                    {
+                        "error": "服务端处理扩图宫格请求时发生异常。",
+                        "details": str(exc),
+                    },
+                )
+
+        if parsed.path == "/api/save-upscale":
+            if not self.ensure_authenticated():
+                return
+            try:
+                return self.handle_save_upscale()
+            except Exception as exc:
+                return json_response(
+                    self,
+                    500,
+                    {
+                        "error": "保存扩图结果时发生异常。",
+                        "details": str(exc),
+                    },
+                )
+
         json_response(self, 404, {"error": "Not found"})
 
     def do_PUT(self) -> None:
@@ -2068,21 +2446,28 @@ class AppHandler(BaseHTTPRequestHandler):
         image_size = map_output_size(form.get("imageSize", "4K"))
         enable_search = form.get("enableSearch", "false").lower() == "true"
 
+        request_mode = str(form.get("mode", "img2img")).strip()
+
         if not str(prompt).strip():
             return json_response(self, 400, {"error": "提示词不能为空，请先输入提示词。"})
 
         base_upload = form.get("baseImage")
-        if not isinstance(base_upload, dict):
+        if request_mode != "txt2img" and not isinstance(base_upload, dict):
             return json_response(self, 400, {"error": "基础图为必填项。"})
+        if not isinstance(base_upload, dict):
+            base_upload = None
 
         ref_uploads = normalize_upload_list(form.get("referenceImages"))
         if len(ref_uploads) > 6:
             return json_response(self, 400, {"error": "参考图最多上传 6 张。"})
 
         if aspect_ratio == "auto":
-            detected = detect_image_size(base_upload["data"], base_upload["mime_type"])
-            if detected:
-                aspect_ratio = aspect_ratio_label(*detected)
+            if base_upload:
+                detected = detect_image_size(base_upload["data"], base_upload["mime_type"])
+                if detected:
+                    aspect_ratio = aspect_ratio_label(*detected)
+                else:
+                    aspect_ratio = "1:1"
             else:
                 aspect_ratio = "1:1"
 
@@ -2157,65 +2542,6 @@ class AppHandler(BaseHTTPRequestHandler):
                 },
             )
 
-        oss_image_url: Optional[str] = None
-        oss_thumb_url: Optional[str] = None
-        oss_metadata_url: Optional[str] = None
-        oss_image_key: Optional[str] = None
-        oss_thumb_key: Optional[str] = None
-        oss_metadata_key: Optional[str] = None
-        oss_error: Optional[str] = None
-        if oss_config:
-            try:
-                metadata_filename = f"{file_id}.xml"
-                metadata_bytes = build_generation_metadata_xml(
-                    file_id=file_id,
-                    created_at=now,
-                    prompt=prompt,
-                    source_prompt=source_prompt or prompt,
-                    prompt_mode=prompt_mode,
-                    aspect_ratio=aspect_ratio,
-                    image_size=image_size,
-                    enable_search=enable_search,
-                    base_image_name=base_upload["filename"],
-                    base_image_sha256=base_upload.get("sha256", ""),
-                    reference_count=len(ref_uploads),
-                    api_platform_id=image_platform["platform_id"],
-                    api_platform_name=image_platform["platform_name"],
-                    image_model=image_platform["image_model"],
-                    mime_type=mime_type,
-                )
-                uploaded = upload_generated_assets_to_oss(
-                    config=oss_config,
-                    now=now,
-                    image_filename=filename,
-                    image_bytes=image_bytes,
-                    image_mime_type=mime_type,
-                    thumb_filename=thumb_path.name,
-                    thumb_bytes=thumb_path.read_bytes(),
-                    metadata_filename=metadata_filename,
-                    metadata_bytes=metadata_bytes,
-                )
-                oss_image_url = uploaded["image_url"]
-                oss_thumb_url = uploaded["thumb_url"]
-                oss_metadata_url = uploaded["metadata_url"]
-                oss_image_key = uploaded["image_key"]
-                oss_thumb_key = uploaded["thumb_key"]
-                oss_metadata_key = uploaded["metadata_key"]
-
-                # OSS 上传成功后删除本地文件，只保留 OSS 上的副本
-                for local_file in (output_path, thumb_path):
-                    try:
-                        if local_file.exists():
-                            local_file.unlink()
-                    except OSError:
-                        pass
-            except Exception as exc:
-                oss_error = str(exc)
-
-        # 如果 OSS 上传成功，imageUrl/thumbUrl 直接指向 OSS；否则保留本地路径
-        image_url_for_entry = oss_image_url if oss_image_url else f"/generated/{filename}"
-        thumb_url_for_entry = oss_thumb_url if oss_thumb_url else get_thumbnail_url(file_id)
-
         entry = {
             "id": file_id,
             "createdAt": now.isoformat(timespec="seconds"),
@@ -2225,31 +2551,328 @@ class AppHandler(BaseHTTPRequestHandler):
             "aspectRatio": aspect_ratio,
             "imageSize": image_size,
             "enableSearch": enable_search,
-            "baseImageName": base_upload["filename"],
-            "baseImageSha256": base_upload.get("sha256", ""),
+            "baseImageName": base_upload["filename"] if base_upload else "",
+            "baseImageSha256": base_upload.get("sha256", "") if base_upload else "",
             "referenceCount": len(ref_uploads),
             "apiPlatformId": image_platform["platform_id"],
             "apiPlatformName": image_platform["platform_name"],
             "imageModel": image_platform["image_model"],
-            "imageUrl": image_url_for_entry,
-            "thumbUrl": thumb_url_for_entry,
+            "mimeType": mime_type,
+            "imageUrl": f"/generated/{filename}",
+            "thumbUrl": get_thumbnail_url(file_id),
+            "localImageUrl": f"/generated/{filename}",
+            "localThumbUrl": get_thumbnail_url(file_id),
             "downloadName": f"banana-pro-{file_id}{extension_for_mime(mime_type)}",
             "message": message,
         }
-        if oss_image_url:
-            entry["ossImageUrl"] = oss_image_url
-        if oss_thumb_url:
-            entry["ossThumbUrl"] = oss_thumb_url
-        if oss_image_key:
-            entry["ossImageKey"] = oss_image_key
-        if oss_thumb_key:
-            entry["ossThumbKey"] = oss_thumb_key
-        if oss_metadata_url:
-            entry["ossMetadataXmlUrl"] = oss_metadata_url
-        if oss_metadata_key:
-            entry["ossMetadataXmlKey"] = oss_metadata_key
-        if oss_error:
-            entry["ossUploadError"] = oss_error
+        if oss_config:
+            entry["ossUploadStatus"] = "queued"
+            entry["ossUploadQueuedAt"] = now.isoformat(timespec="seconds")
+        append_history(entry)
+        if oss_config:
+            start_oss_upload_worker()
+            if not enqueue_oss_upload(file_id):
+                update_history_entry(
+                    file_id,
+                    {
+                        "ossUploadStatus": "failed",
+                        "ossUploadError": "OSS 上传任务入队失败。",
+                    },
+                )
+                entry["ossUploadStatus"] = "failed"
+                entry["ossUploadError"] = "OSS 上传任务入队失败。"
+        json_response(self, 200, entry)
+
+    def handle_upscale_tile(self) -> None:
+        if Image is None:
+            return json_response(self, 500, {"error": "缺少 Pillow 依赖。"})
+
+        form = self.parse_multipart_form()
+        if form is None:
+            return
+
+        selected_platform_id = str(form.get("apiPlatformId", "")).strip()
+        requested_image_model = str(form.get("imageModel", "")).strip()
+        try:
+            image_platform = resolve_image_generation_platform(selected_platform_id, requested_image_model)
+        except ImagePlatformConfigError as exc:
+            return json_response(self, exc.status_code, {"error": str(exc)})
+
+        tile_upload = form.get("tileImage")
+        if not isinstance(tile_upload, dict):
+            return json_response(self, 400, {"error": "宫格图片为必填项。"})
+
+        # Detect tile dimensions to preserve aspect ratio
+        tile_bytes_raw = base64.b64decode(tile_upload["base64"])
+        tile_mime = tile_upload.get("mime_type", "image/jpeg")
+        detected_size = detect_image_size(tile_bytes_raw, tile_mime)
+        if detected_size:
+            tile_aspect_ratio = aspect_ratio_label(*detected_size)
+        else:
+            tile_aspect_ratio = "1:1"
+
+        prompt = (
+            "You are performing a technical upscale of this image tile. "
+            "CRITICAL RULES — strictly follow all of them: "
+            "(1) Preserve EVERY color exactly as it appears — do not shift, saturate, desaturate, or alter any hue or tone. "
+            "(2) Preserve the exact composition, structure, and spatial layout — do not move, add, or remove any object. "
+            "(3) Preserve the exact artistic style, lighting direction, and atmosphere — do not change mood or rendering style. "
+            "(4) Do NOT invent or hallucinate new content. "
+            "Your ONLY task is to sharpen existing edges, recover fine surface texture and micro-detail, and increase perceived resolution. "
+            "The output must look identical to the input at a glance, only crisper and more detailed."
+        )
+
+        payload = build_payload(
+            prompt=prompt,
+            base_image=tile_upload,
+            reference_images=[],
+            aspect_ratio=tile_aspect_ratio,
+            image_size=map_output_size("4K"),
+            enable_search=False,
+        )
+
+        try:
+            body = json.dumps(payload).encode("utf-8")
+            response_payload = post_json_to_upstream(
+                api_url=image_platform["api_url"],
+                body=body,
+                api_key=image_platform["api_key"],
+                timeout=TIMEOUT_MAP.get(map_output_size("4K"), 300),
+            )
+        except UpstreamHttpError as exc:
+            return json_response(self, exc.status_code, {"error": "上游接口返回错误。", "details": exc.details})
+        except Exception as exc:
+            return json_response(self, 502, {"error": "调用扩图宫格接口失败。", "details": str(exc)})
+
+        image_bytes, mime_type, _ = parse_response_image(response_payload)
+        if not image_bytes or not mime_type:
+            return json_response(self, 502, {"error": "接口返回成功，但没有拿到宫格图片数据。"})
+
+        self.send_response(200)
+        self.send_header("Content-Type", mime_type)
+        self.send_header("Content-Length", str(len(image_bytes)))
+        self.end_headers()
+        self.wfile.write(image_bytes)
+
+    def handle_stitch_tiles(self) -> None:
+        if Image is None:
+            return json_response(self, 500, {"error": "缺少 Pillow 依赖。"})
+
+        form = self.parse_multipart_form()
+        if form is None:
+            return
+
+        grid_n = int(str(form.get("gridN", "2")).strip())
+        platform_id = str(form.get("apiPlatformId", "")).strip()
+        image_model = str(form.get("imageModel", "")).strip()
+        ratio_label = str(form.get("ratioLabel", f"{grid_n}x")).strip()
+
+        total = grid_n * grid_n
+        tile_data = []
+        for i in range(total):
+            upload = form.get(f"tileImage_{i}")
+            if not isinstance(upload, dict):
+                return json_response(self, 400, {"error": f"缺少宫格图片 tileImage_{i}。"})
+            raw = base64.b64decode(upload["base64"])
+            try:
+                img = Image.open(io.BytesIO(raw)).convert("RGB")
+            except Exception as exc:
+                return json_response(self, 400, {"error": f"宫格 {i} 图片解析失败。", "details": str(exc)})
+            tw, th = img.size
+            clean_x = int(str(form.get(f"cleanX_{i}", "0")).strip())
+            clean_y = int(str(form.get(f"cleanY_{i}", "0")).strip())
+            clean_w = int(str(form.get(f"cleanW_{i}", str(tw))).strip())
+            clean_h = int(str(form.get(f"cleanH_{i}", str(th))).strip())
+            tile_data.append({
+                "img": img, "tw": tw, "th": th,
+                "clean_x": clean_x, "clean_y": clean_y,
+                "clean_w": clean_w, "clean_h": clean_h,
+            })
+
+        # Grid cell size from first tile's clean region
+        cell_w = tile_data[0]["clean_w"]
+        cell_h = tile_data[0]["clean_h"]
+        out_w = cell_w * grid_n
+        out_h = cell_h * grid_n
+        canvas = Image.new("RGB", (out_w, out_h))
+
+        # Step 1: paste each clean region into its grid position
+        for row in range(grid_n):
+            for col in range(grid_n):
+                d = tile_data[row * grid_n + col]
+                cx, cy, cw, ch = d["clean_x"], d["clean_y"], d["clean_w"], d["clean_h"]
+                crop = d["img"].crop((cx, cy, cx + cw, cy + ch))
+                if crop.size != (cell_w, cell_h):
+                    crop = crop.resize((cell_w, cell_h), Image.LANCZOS)
+                canvas.paste(crop, (col * cell_w, row * cell_h))
+
+        # Step 2: blend vertical seams (between col and col+1) using overlap content
+        for row in range(grid_n):
+            for col in range(grid_n - 1):
+                dl = tile_data[row * grid_n + col]
+                dr = tile_data[row * grid_n + col + 1]
+                # Pixels available for blending from each side
+                fr = dl["tw"] - dl["clean_x"] - dl["clean_w"]  # right overlap of left tile
+                fl = dr["clean_x"]                               # left overlap of right tile
+                blend_w = min(fr, fl)
+                if blend_w <= 0:
+                    continue
+                # Extract matching strips from overlap zones
+                lx = dl["clean_x"] + dl["clean_w"] - blend_w
+                left_strip = dl["img"].crop((lx, dl["clean_y"], lx + blend_w, dl["clean_y"] + dl["clean_h"]))
+                if left_strip.size != (blend_w, cell_h):
+                    left_strip = left_strip.resize((blend_w, cell_h), Image.LANCZOS)
+                rx = dr["clean_x"]
+                right_strip = dr["img"].crop((rx, dr["clean_y"], rx + blend_w, dr["clean_y"] + dr["clean_h"]))
+                if right_strip.size != (blend_w, cell_h):
+                    right_strip = right_strip.resize((blend_w, cell_h), Image.LANCZOS)
+                # Column-wise linear blend
+                blend_img = Image.new("RGB", (blend_w, cell_h))
+                for bx in range(blend_w):
+                    t = bx / max(blend_w - 1, 1)
+                    col_l = left_strip.crop((bx, 0, bx + 1, cell_h))
+                    col_r = right_strip.crop((bx, 0, bx + 1, cell_h))
+                    blend_img.paste(Image.blend(col_l, col_r, t), (bx, 0))
+                seam_x = (col + 1) * cell_w - blend_w // 2
+                canvas.paste(blend_img, (seam_x, row * cell_h))
+
+        # Step 3: blend horizontal seams (between row and row+1)
+        for col in range(grid_n):
+            for row in range(grid_n - 1):
+                dt = tile_data[row * grid_n + col]
+                db = tile_data[(row + 1) * grid_n + col]
+                fb = dt["th"] - dt["clean_y"] - dt["clean_h"]
+                ft = db["clean_y"]
+                blend_h = min(fb, ft)
+                if blend_h <= 0:
+                    continue
+                ty = dt["clean_y"] + dt["clean_h"] - blend_h
+                top_strip = dt["img"].crop((dt["clean_x"], ty, dt["clean_x"] + dt["clean_w"], ty + blend_h))
+                if top_strip.size != (cell_w, blend_h):
+                    top_strip = top_strip.resize((cell_w, blend_h), Image.LANCZOS)
+                by = db["clean_y"]
+                bot_strip = db["img"].crop((db["clean_x"], by, db["clean_x"] + db["clean_w"], by + blend_h))
+                if bot_strip.size != (cell_w, blend_h):
+                    bot_strip = bot_strip.resize((cell_w, blend_h), Image.LANCZOS)
+                blend_img = Image.new("RGB", (cell_w, blend_h))
+                for by2 in range(blend_h):
+                    t = by2 / max(blend_h - 1, 1)
+                    row_t = top_strip.crop((0, by2, cell_w, by2 + 1))
+                    row_b = bot_strip.crop((0, by2, cell_w, by2 + 1))
+                    blend_img.paste(Image.blend(row_t, row_b, t), (0, by2))
+                seam_y = (row + 1) * cell_h - blend_h // 2
+                canvas.paste(blend_img, (col * cell_w, seam_y))
+
+        buf = io.BytesIO()
+        canvas.save(buf, format="JPEG", quality=95)
+        image_bytes = buf.getvalue()
+        mime_type = "image/jpeg"
+
+        now = datetime.now()
+        file_id = f"{now.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+        filename = f"{file_id}.jpg"
+        output_path = GENERATED_DIR / filename
+        output_path.write_bytes(image_bytes)
+        thumb_path = get_thumbnail_path(file_id)
+
+        try:
+            build_thumbnail(output_path, thumb_path)
+        except Exception as exc:
+            try:
+                if output_path.exists():
+                    output_path.unlink()
+            except OSError:
+                pass
+            return json_response(self, 500, {"error": "缩略图创建失败。", "details": str(exc)})
+
+        entry = {
+            "id": file_id,
+            "createdAt": now.isoformat(timespec="seconds"),
+            "prompt": f"扩图 {ratio_label}",
+            "sourcePrompt": f"扩图 {ratio_label}",
+            "promptMode": "upscale",
+            "aspectRatio": "auto",
+            "imageSize": "4K",
+            "enableSearch": False,
+            "baseImageName": "",
+            "baseImageSha256": "",
+            "referenceCount": 0,
+            "apiPlatformId": platform_id,
+            "apiPlatformName": "",
+            "imageModel": image_model,
+            "imageUrl": f"/generated/{filename}",
+            "thumbUrl": get_thumbnail_url(file_id),
+            "downloadName": f"banana-pro-{file_id}.jpg",
+            "message": f"输出尺寸 {out_w}x{out_h}",
+        }
+        append_history(entry)
+
+        self.send_response(200)
+        self.send_header("Content-Type", mime_type)
+        self.send_header("Content-Length", str(len(image_bytes)))
+        self.send_header("X-History-Id", file_id)
+        self.send_header("X-Image-Url", entry["imageUrl"])
+        self.send_header("X-Thumb-Url", entry["thumbUrl"])
+        self.end_headers()
+        self.wfile.write(image_bytes)
+
+    def handle_save_upscale(self) -> None:
+        if Image is None:
+            return json_response(self, 500, {"error": "缺少 Pillow 依赖。"})
+
+        form = self.parse_multipart_form()
+        if form is None:
+            return
+
+        image_upload = form.get("image")
+        if not isinstance(image_upload, dict):
+            return json_response(self, 400, {"error": "图片为必填项。"})
+
+        prompt = str(form.get("prompt", "扩图")).strip()
+        source_prompt = str(form.get("sourcePrompt", "")).strip() or prompt
+        platform_id = str(form.get("apiPlatformId", "")).strip()
+        image_model = str(form.get("imageModel", "")).strip()
+
+        image_bytes = base64.b64decode(image_upload["base64"])
+        mime_type = image_upload.get("mime_type", "image/jpeg")
+
+        now = datetime.now()
+        file_id = f"{now.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+        filename = f"{file_id}{extension_for_mime(mime_type)}"
+        output_path = GENERATED_DIR / filename
+        output_path.write_bytes(image_bytes)
+        thumb_path = get_thumbnail_path(file_id)
+
+        try:
+            build_thumbnail(output_path, thumb_path)
+        except Exception as exc:
+            try:
+                if output_path.exists():
+                    output_path.unlink()
+            except OSError:
+                pass
+            return json_response(self, 500, {"error": "缩略图创建失败。", "details": str(exc)})
+
+        entry = {
+            "id": file_id,
+            "createdAt": now.isoformat(timespec="seconds"),
+            "prompt": prompt,
+            "sourcePrompt": source_prompt,
+            "promptMode": "upscale",
+            "aspectRatio": "auto",
+            "imageSize": "4K",
+            "enableSearch": False,
+            "baseImageName": "",
+            "baseImageSha256": "",
+            "referenceCount": 0,
+            "apiPlatformId": platform_id,
+            "apiPlatformName": "",
+            "imageModel": image_model,
+            "imageUrl": f"/generated/{filename}",
+            "thumbUrl": get_thumbnail_url(file_id),
+            "downloadName": f"banana-pro-{file_id}{extension_for_mime(mime_type)}",
+            "message": "",
+        }
         append_history(entry)
         json_response(self, 200, entry)
 
@@ -2400,20 +3023,9 @@ class AppHandler(BaseHTTPRequestHandler):
             return json_response(self, 404, {"error": "未找到对应的历史记录。"})
 
         # Keep OSS objects intentionally; only local cache files are removed.
-        image_target = resolve_generated_path(str(removed.get("imageUrl", "")))
-        if image_target:
-            try:
-                if image_target.exists():
-                    image_target.unlink()
-            except OSError:
-                pass
-
-        thumb_target = resolve_generated_path(str(removed.get("thumbUrl", ""))) or get_thumbnail_path(item_id)
-        try:
-            if thumb_target and thumb_target.exists():
-                thumb_target.unlink()
-        except OSError:
-            pass
+        image_target = get_local_image_cache_path(removed)
+        thumb_target = get_local_thumb_cache_path(removed)
+        remove_local_cache_files([image_target, thumb_target])
 
         json_response(self, 200, {"ok": True, "id": item_id})
 
@@ -2673,6 +3285,7 @@ class AppHandler(BaseHTTPRequestHandler):
 def main() -> None:
     ensure_dirs()
     load_sessions()
+    recover_pending_oss_uploads()
     host = get_setting("BANANA_PRO_HOST", "127.0.0.1")
     port = int(get_setting("BANANA_PRO_PORT", str(DEFAULT_PORT)))
     server = ThreadingHTTPServer((host, port), AppHandler)

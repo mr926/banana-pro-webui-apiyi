@@ -99,6 +99,7 @@ const state = {
   promptCursorTarget: "",
   promptCursorStart: 0,
   promptCursorEnd: 0,
+  currentMode: "img2img",
 };
 
 const progressSteps = [
@@ -379,6 +380,71 @@ function getPreferredThumbUrl(entry) {
 
 function getTransferImageUrl(entry) {
   return String(entry?.imageUrl || getPreferredImageUrl(entry) || "").trim();
+}
+
+function getOssUploadStatus(entry) {
+  return String(entry?.ossUploadStatus || "").trim().toLowerCase();
+}
+
+function isOssUploadPending(entry) {
+  return ["queued", "uploading", "retrying"].includes(getOssUploadStatus(entry));
+}
+
+function getOssStatusPresentation(entry) {
+  const status = getOssUploadStatus(entry);
+  if (status === "queued") {
+    return {
+      label: "OSS 排队中",
+      tone: "warning",
+      placeholderTitle: "正在排队上传到 OSS",
+      placeholderText: "图片已生成成功，后台会按顺序上传，当前先不加载预览图以节省带宽。",
+    };
+  }
+  if (status === "uploading") {
+    return {
+      label: "OSS 上传中",
+      tone: "info",
+      placeholderTitle: "正在上传到 OSS",
+      placeholderText: "图片已生成成功，后台正在上传原图、缩略图和 XML，当前暂停预览加载。",
+    };
+  }
+  if (status === "retrying") {
+    return {
+      label: "OSS 重试中",
+      tone: "warning",
+      placeholderTitle: "OSS 正在重试上传",
+      placeholderText: "上一轮上传没有成功，后台正在自动重试，当前不加载图片预览。",
+    };
+  }
+  if (status === "uploaded") {
+    return { label: "OSS 已同步", tone: "success" };
+  }
+  if (status === "failed") {
+    return { label: "OSS 上传失败", tone: "danger" };
+  }
+  return null;
+}
+
+function buildPendingMediaPlaceholderMarkup(entry, compact = false) {
+  const status = getOssStatusPresentation(entry);
+  const title = status?.placeholderTitle || "正在处理中";
+  const text = status?.placeholderText || "当前暂不加载图片预览。";
+  return `
+    <div class="media-upload-placeholder${compact ? " is-compact" : ""}">
+      <div class="media-upload-placeholder-icon">⇪</div>
+      <h3>${title}</h3>
+      <p>${text}</p>
+    </div>
+  `;
+}
+
+function appendMediaStatusBadge(container, entry) {
+  const status = getOssStatusPresentation(entry);
+  if (!container || !status) return;
+  const badge = document.createElement("span");
+  badge.className = `media-status-badge is-${status.tone}`;
+  badge.textContent = status.label;
+  container.appendChild(badge);
 }
 
 function triggerDownloadLink(url, filename) {
@@ -1606,11 +1672,19 @@ function syncSubmitButtonState() {
   if (!submitButtons.length) return;
   if (state.progressTimer) return;
 
-  const promptMode = getPromptMode();
   const hasImageTarget = Boolean(state.selectedApiPlatformId && state.selectedImageModel);
+
+  if (state.currentMode === "upscale") {
+    const canSubmit = hasImageTarget && Boolean(state.baseImageFile);
+    setSubmitButtonLabel("开始扩图");
+    setSubmitButtonsDisabled(!canSubmit);
+    return;
+  }
+
+  const promptMode = getPromptMode();
   const canSubmit =
     hasImageTarget &&
-    state.baseImageFile &&
+    (state.currentMode === "txt2img" || state.baseImageFile) &&
     (promptMode === "optimized" ? hasOptimizedPrompt() : hasSourcePrompt());
   setSubmitButtonLabel("开始生成");
   setSubmitButtonsDisabled(!canSubmit);
@@ -1820,6 +1894,14 @@ function renderMetaInto(container, entry) {
   container.innerHTML = "";
   if (!entry) return;
 
+  const status = getOssStatusPresentation(entry);
+  if (status) {
+    const statusTag = document.createElement("span");
+    statusTag.className = `meta-pill meta-pill-status is-${status.tone}`;
+    statusTag.textContent = status.label;
+    container.appendChild(statusTag);
+  }
+
   const values = [
     entry.apiPlatformName ? `平台 ${entry.apiPlatformName}` : "",
     entry.imageModel ? `模型 ${entry.imageModel}` : "",
@@ -1915,17 +1997,20 @@ function renderCurrentResult(entry) {
   }
 
   const displayImageUrl = getPreferredImageUrl(entry);
+  const pendingUpload = isOssUploadPending(entry);
   const downloadLabel = getDownloadActionLabel("single");
   resultTargets.forEach(({ stage }) => {
     stage.className = "result-stage";
     stage.innerHTML = `
       <div class="result-view">
-        <div class="result-image-shell">
-          <img class="result-image-original" src="${displayImageUrl}" alt="生成结果" />
+        <div class="result-image-shell${pendingUpload ? " is-upload-pending" : ""}">
+          ${pendingUpload ? buildPendingMediaPlaceholderMarkup(entry, false) : `<img class="result-image-original" src="${displayImageUrl}" alt="生成结果" />`}
+          ${pendingUpload ? "" : `
           <div class="image-transfer-actions">
             <button type="button" class="image-transfer-button" data-action="send-base">基础图</button>
             <button type="button" class="image-transfer-button" data-action="send-reference">参考图</button>
           </div>
+          `}
         </div>
         <div class="result-actions">
           <div class="result-action-buttons">
@@ -2065,6 +2150,7 @@ function finishOptimizeProgress(message = "优化完成") {
 function buildHistoryNode(entry) {
   const node = historyTemplate.content.firstElementChild.cloneNode(true);
   const img = node.querySelector(".history-image");
+  const thumb = node.querySelector(".history-gallery-thumb");
   const time = node.querySelector(".history-time");
   const tags = node.querySelector(".history-tags");
   const viewButton = node.querySelector(".history-view");
@@ -2077,16 +2163,28 @@ function buildHistoryNode(entry) {
 
   const thumbUrl = getPreferredThumbUrl(entry) || getPreferredImageUrl(entry);
   const imageUrl = getPreferredImageUrl(entry);
-  img.src = thumbUrl;
-  img.alt = entry.prompt || "历史图片";
-  img.loading = "lazy";
-  img.decoding = "async";
+  const pendingUpload = isOssUploadPending(entry);
+  if (pendingUpload) {
+    img.removeAttribute("src");
+    img.hidden = true;
+    thumb?.classList.add("is-upload-pending");
+    thumb?.insertAdjacentHTML("beforeend", buildPendingMediaPlaceholderMarkup(entry, true));
+  } else {
+    img.src = thumbUrl;
+    img.alt = entry.prompt || "历史图片";
+    img.loading = "lazy";
+    img.decoding = "async";
+    img.hidden = false;
+  }
+  appendMediaStatusBadge(thumb, entry);
   time.textContent = formatDate(entry.createdAt);
+  const status = getOssStatusPresentation(entry);
   tags.textContent = [
     entry.aspectRatio,
     entry.imageSize,
     entry.apiPlatformName || "",
     entry.imageModel || "",
+    status?.label || "",
   ].filter(Boolean).join(" · ");
 
   viewButton.addEventListener("click", () => {
@@ -2621,7 +2719,10 @@ function buildGenerateFormData(finalPrompt, promptMode) {
   formData.set("promptMode", promptMode);
   formData.set("aspectRatio", form.querySelector('input[name="aspectRatio"]:checked').value);
   formData.set("imageSize", form.querySelector('input[name="imageSize"]:checked').value);
-  formData.append("baseImage", state.baseImageFile);
+  if (state.currentMode !== "txt2img") {
+    formData.append("baseImage", state.baseImageFile);
+  }
+  formData.set("mode", state.currentMode);
   state.referenceFiles.forEach((file) => {
     formData.append("referenceImages", file);
   });
@@ -2633,7 +2734,12 @@ function buildGenerateFormData(finalPrompt, promptMode) {
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
 
-  if (!state.baseImageFile) {
+  if (state.currentMode === "upscale") {
+    await handleUpscaleSubmit();
+    return;
+  }
+
+  if (state.currentMode === "img2img" && !state.baseImageFile) {
     setStatus("请先上传基础结构图。", true);
     return;
   }
@@ -2649,7 +2755,7 @@ form.addEventListener("submit", async (event) => {
   if (promptMode === "optimized") {
     finalPrompt = (optimizedPromptTextarea?.value || state.optimizedPrompt || "").trim();
     if (!finalPrompt) {
-      setStatus("当前处于 AI 翻译优化模式，请先点击“提示词优化”。", true);
+      setStatus("当前处于 AI 翻译优化模式，请先点击【提示词优化】。", true);
       syncSubmitButtonState();
       return;
     }
@@ -2678,10 +2784,15 @@ form.addEventListener("submit", async (event) => {
     try {
       const formData = buildGenerateFormData(finalPrompt, promptMode);
       const payload = await doGenerateOnce(formData);
+      const pendingOssUpload = isOssUploadPending(payload);
 
       // ── 成功 ──
       setRetryCount(0);
-      setStatus("生成完成，可以直接下载，也会自动保留到历史记录。");
+      setStatus(
+        pendingOssUpload
+          ? "生成完成，已进入 OSS 上传队列，当前先显示占位状态。"
+          : "生成完成，可以直接下载，也会自动保留到历史记录。",
+      );
       playSuccessSound();
       getPwaRuntime()?.vibrate?.([120, 60, 120]);
       sendBrowserNotification("Banana Pro 图片生成成功", "图片已经生成完成，可以回到页面查看和下载。");
@@ -2779,7 +2890,7 @@ uploadPromptPersonaButton?.addEventListener("click", async () => {
 
 createPromptPersonaButton?.addEventListener("click", () => {
   prepareNewPromptPersona();
-  setPromptPersonaModalStatus("已切换到新建模式，填写后点击“创建技能”。");
+  setPromptPersonaModalStatus("已切换到新建模式，填写后点击【创建技能】。");
 });
 
 promptPersonaFilenameInput?.addEventListener("blur", () => {
@@ -2911,6 +3022,342 @@ if (promptTextareaMobile && promptTextarea) {
 }
 bindMirroredRadioGroup("aspectRatio", "aspectRatio-m");
 bindMirroredRadioGroup("imageSize", "imageSize-m");
+bindMirroredRadioGroup("upscaleRatio", "upscaleRatio-m");
 bindUploadDropZones();
+
+// ── 修改 buildGenerateFormData：txt2img 不附基础图 ─────────────────
+// (patch applied inline via switchMode ensuring state.currentMode is set)
+
+// ── 模式切换 ─────────────────────────────────────────────────────────
+function switchMode(mode) {
+  state.currentMode = mode;
+
+  const baseSection = document.querySelector('[data-section="base"]');
+  const refSection = document.querySelector('[data-section="reference"]');
+  const promptSection = document.querySelector('[data-section="prompt"]');
+  const upscaleSection = document.getElementById("section-upscale-options");
+  const upscaleContainer = document.getElementById("upscale-progress-container");
+  const upscaleContainerMobile = document.getElementById("upscale-progress-container-mobile");
+
+  // Reset all to default (img2img)
+  baseSection?.classList.remove("hidden");
+  refSection?.classList.remove("hidden");
+  promptSection?.classList.remove("hidden");
+  upscaleSection?.classList.add("hidden");
+
+  if (mode === "txt2img") {
+    baseSection?.classList.add("hidden");
+    // Move prompt section to be visually first by adjusting step numbers
+    if (promptSection) {
+      const stepEl = promptSection.querySelector(".param-section-step");
+      if (stepEl) stepEl.textContent = "1";
+    }
+    if (refSection) {
+      const stepEl = refSection.querySelector(".param-section-step");
+      if (stepEl) stepEl.textContent = "2";
+    }
+  } else {
+    // Restore step numbers
+    if (promptSection) {
+      const stepEl = promptSection.querySelector(".param-section-step");
+      if (stepEl) stepEl.textContent = "2";
+    }
+    if (refSection) {
+      const stepEl = refSection.querySelector(".param-section-step");
+      if (stepEl) stepEl.textContent = "3";
+    }
+  }
+
+  if (mode === "upscale") {
+    refSection?.classList.add("hidden");
+    promptSection?.classList.add("hidden");
+    upscaleSection?.classList.remove("hidden");
+  }
+
+  // Hide progress containers on mode switch
+  upscaleContainer?.classList.add("hidden");
+  upscaleContainerMobile?.classList.add("hidden");
+
+  // Sync mobile mode-select if present
+  const mobileSelect = document.getElementById("mode-select-m");
+  if (mobileSelect && mobileSelect.value !== mode) mobileSelect.value = mode;
+  const desktopSelect = document.getElementById("mode-select");
+  if (desktopSelect && desktopSelect.value !== mode) desktopSelect.value = mode;
+
+  syncSubmitButtonState();
+}
+
+document.getElementById("mode-select")?.addEventListener("change", (e) => {
+  switchMode(e.target.value);
+});
+document.getElementById("mode-select-m")?.addEventListener("change", (e) => {
+  switchMode(e.target.value);
+});
+
+// ── 扩图：Canvas 切图工具 ─────────────────────────────────────────────
+function cropTileFromCanvas(srcCanvas, x, y, w, h) {
+  const tileCanvas = document.createElement("canvas");
+  tileCanvas.width = w;
+  tileCanvas.height = h;
+  tileCanvas.getContext("2d").drawImage(srcCanvas, x, y, w, h, 0, 0, w, h);
+  return tileCanvas;
+}
+
+function canvasToBlobPromise(canvas, mimeType = "image/jpeg", quality = 0.92) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob); else reject(new Error("Canvas toBlob failed"));
+    }, mimeType, quality);
+  });
+}
+
+function loadImageToCanvas(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      canvas.getContext("2d").drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+      resolve(canvas);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Image load failed")); };
+    img.src = url;
+  });
+}
+
+// ── 扩图：进度条管理 ──────────────────────────────────────────────────
+function createUpscaleProgressBars(n, isMobile) {
+  const containerId = isMobile ? "upscale-progress-container-mobile" : "upscale-progress-container";
+  const container = document.getElementById(containerId);
+  if (!container) return [];
+  container.innerHTML = "";
+  container.classList.remove("hidden");
+
+  const bars = [];
+  for (let i = 0; i < n; i++) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "upscale-tile-progress";
+    wrapper.innerHTML = `
+      <span class="upscale-tile-label">宫格 ${i + 1}</span>
+      <div class="progress-track">
+        <div class="progress-fill" style="width:0%"></div>
+      </div>
+      <span class="upscale-tile-pct">0%</span>
+    `;
+    container.appendChild(wrapper);
+    bars.push(wrapper);
+  }
+  return bars;
+}
+
+function updateUpscaleBar(barEl, pct, label) {
+  if (!barEl) return;
+  const fill = barEl.querySelector(".progress-fill");
+  const pctEl = barEl.querySelector(".upscale-tile-pct");
+  const labelEl = barEl.querySelector(".upscale-tile-label");
+  if (fill) fill.style.width = `${pct}%`;
+  if (pctEl) pctEl.textContent = `${Math.round(pct)}%`;
+  if (label && labelEl) labelEl.textContent = label;
+}
+
+// ── 扩图：主流程 ─────────────────────────────────────────────────────
+async function handleUpscaleSubmit() {
+  if (!state.baseImageFile) {
+    setStatus("请先上传基础结构图。", true);
+    return;
+  }
+  if (!state.selectedApiPlatformId || !state.selectedImageModel) {
+    setStatus("请先选择可用的 API 平台和生成模型。", true);
+    return;
+  }
+
+  const ratio = parseInt(
+    (document.querySelector('input[name="upscaleRatio"]:checked') ||
+     document.querySelector('input[name="upscaleRatio-m"]:checked'))?.value || "2"
+  );
+  const gridN = ratio; // 2 → 2×2=4 tiles, 3 → 3×3=9 tiles
+  const totalTiles = gridN * gridN;
+  const OVERLAP = 0.08; // 8% edge overlap per side
+
+  setStatus(`正在准备扩图（${ratio}x，${totalTiles} 个宫格）…`);
+  setSubmitButtonsDisabled(true);
+
+  let srcCanvas;
+  try {
+    srcCanvas = await loadImageToCanvas(state.baseImageFile);
+  } catch {
+    setStatus("读取基础图失败。", true);
+    setSubmitButtonsDisabled(false);
+    return;
+  }
+
+  const srcW = srcCanvas.width;
+  const srcH = srcCanvas.height;
+  const tileW = srcW / gridN;
+  const tileH = srcH / gridN;
+  const overlapPxW = Math.round(tileW * OVERLAP);
+  const overlapPxH = Math.round(tileH * OVERLAP);
+
+  // Create progress bars for desktop + mobile
+  const desktopBars = createUpscaleProgressBars(totalTiles, false);
+  const mobileBars = createUpscaleProgressBars(totalTiles, true);
+
+  const UPSCALE_PROMPT = "Upscale this image tile to 4K resolution. Add fine details, textures and clarity. Maintain exact composition, colors and style. Ensure seamless edges for tile stitching. Photorealistic quality.";
+
+  // Build tile fetch promises
+  const tileResults = new Array(totalTiles);
+  const tilePromises = [];
+
+  for (let row = 0; row < gridN; row++) {
+    for (let col = 0; col < gridN; col++) {
+      const idx = row * gridN + col;
+
+      // Crop region with overlap (clamped to image bounds)
+      const cropX = Math.max(0, col * tileW - overlapPxW);
+      const cropY = Math.max(0, row * tileH - overlapPxH);
+      const cropX2 = Math.min(srcW, (col + 1) * tileW + overlapPxW);
+      const cropY2 = Math.min(srcH, (row + 1) * tileH + overlapPxH);
+      const cropW = cropX2 - cropX;
+      const cropH = cropY2 - cropY;
+
+      // Store exact start of the clean tile within the cropped image (for stitching)
+      const cleanOffsetX = col * tileW - cropX;
+      const cleanOffsetY = row * tileH - cropY;
+
+      const tileCanvas = cropTileFromCanvas(srcCanvas, cropX, cropY, cropW, cropH);
+
+      const promise = (async () => {
+        updateUpscaleBar(desktopBars[idx], 5, `宫格 ${idx + 1} 上传中`);
+        updateUpscaleBar(mobileBars[idx], 5, `宫格 ${idx + 1} 上传中`);
+
+        let tileBlob;
+        try {
+          tileBlob = await canvasToBlobPromise(tileCanvas, "image/jpeg", 0.92);
+        } catch {
+          updateUpscaleBar(desktopBars[idx], 100, `宫格 ${idx + 1} 压缩失败`);
+          updateUpscaleBar(mobileBars[idx], 100, `宫格 ${idx + 1} 压缩失败`);
+          tileResults[idx] = null;
+          return;
+        }
+
+        // Fake progress while waiting for API
+        let fakePct = 10;
+        const fakeTimer = setInterval(() => {
+          fakePct = Math.min(fakePct + Math.random() * 8, 88);
+          updateUpscaleBar(desktopBars[idx], fakePct, `宫格 ${idx + 1} 生成中`);
+          updateUpscaleBar(mobileBars[idx], fakePct, `宫格 ${idx + 1} 生成中`);
+        }, 1200);
+
+        try {
+          const fd = new FormData();
+          fd.append("tileImage", tileBlob, `tile_${idx}.jpg`);
+          fd.append("apiPlatformId", state.selectedApiPlatformId);
+          fd.append("imageModel", state.selectedImageModel);
+          fd.append("prompt", UPSCALE_PROMPT);
+
+          const resp = await fetch("/api/upscale-tile", { method: "POST", body: fd });
+          clearInterval(fakeTimer);
+
+          if (!resp.ok) {
+            throw new Error(`HTTP ${resp.status}`);
+          }
+
+          const imgBlob = await resp.blob();
+
+          // Get returned tile dimensions to compute clean region in returned coords
+          const retDims = await new Promise((res, rej) => {
+            const img = new Image();
+            const url = URL.createObjectURL(imgBlob);
+            img.onload = () => { URL.revokeObjectURL(url); res({ w: img.naturalWidth, h: img.naturalHeight }); };
+            img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("load failed")); };
+            img.src = url;
+          });
+
+          // Scale clean region from original-image pixels → returned-tile pixels
+          const scaleX = retDims.w / cropW;
+          const scaleY = retDims.h / cropH;
+          tileResults[idx] = {
+            blob: imgBlob,
+            cleanX: Math.round(cleanOffsetX * scaleX),
+            cleanY: Math.round(cleanOffsetY * scaleY),
+            cleanW: Math.round(tileW * scaleX),
+            cleanH: Math.round(tileH * scaleY),
+          };
+          updateUpscaleBar(desktopBars[idx], 100, `宫格 ${idx + 1} 完成`);
+          updateUpscaleBar(mobileBars[idx], 100, `宫格 ${idx + 1} 完成`);
+        } catch (err) {
+          clearInterval(fakeTimer);
+          updateUpscaleBar(desktopBars[idx], 100, `宫格 ${idx + 1} 失败`);
+          updateUpscaleBar(mobileBars[idx], 100, `宫格 ${idx + 1} 失败`);
+          tileResults[idx] = null;
+        }
+      })();
+
+      tilePromises.push(promise);
+    }
+  }
+
+  await Promise.all(tilePromises);
+
+  // Check for failures
+  const failed = tileResults.filter(r => r === null).length;
+  if (failed > 0) {
+    setStatus(`扩图完成，但有 ${failed} 个宫格生成失败。`, true);
+    setSubmitButtonsDisabled(false);
+    syncSubmitButtonState();
+    return;
+  }
+
+  setStatus("正在拼合图片（服务端羽化合成）…");
+
+  // Send all tiles to server for Pillow feather-blend stitching
+  let finalBlob;
+  try {
+    const stitchFd = new FormData();
+    stitchFd.append("gridN", String(gridN));
+    stitchFd.append("overlapRatio", String(OVERLAP));
+    stitchFd.append("apiPlatformId", state.selectedApiPlatformId);
+    stitchFd.append("imageModel", state.selectedImageModel);
+    stitchFd.append("ratioLabel", `${ratio}x`);
+    tileResults.forEach((result, i) => {
+      stitchFd.append(`tileImage_${i}`, result.blob, `tile_${i}.jpg`);
+      stitchFd.append(`cleanX_${i}`, String(result.cleanX));
+      stitchFd.append(`cleanY_${i}`, String(result.cleanY));
+      stitchFd.append(`cleanW_${i}`, String(result.cleanW));
+      stitchFd.append(`cleanH_${i}`, String(result.cleanH));
+    });
+    const stitchResp = await fetch("/api/stitch-tiles", { method: "POST", body: stitchFd });
+    if (!stitchResp.ok) {
+      const errJson = await stitchResp.json().catch(() => ({}));
+      throw new Error(errJson.error || `HTTP ${stitchResp.status}`);
+    }
+    finalBlob = await stitchResp.blob();
+    const imageUrl = stitchResp.headers.get("X-Image-Url") || "";
+    const displayUrl = imageUrl || URL.createObjectURL(finalBlob);
+    renderCurrentResult({
+      imageUrl: displayUrl,
+      prompt: `扩图 ${ratio}x`,
+      downloadName: `upscale-${ratio}x.jpg`,
+    });
+    const w = ""; // server doesn't return dimensions; skip size in status
+    setStatus(`扩图完成 ✓`);
+  } catch (err) {
+    setStatus(`拼合失败：${err.message}`, true);
+    setSubmitButtonsDisabled(false);
+    syncSubmitButtonState();
+    return;
+  }
+
+  setSubmitButtonsDisabled(false);
+  syncSubmitButtonState();
+  playSuccessSound().catch(() => {});
+  startTitleFlash("✅ 扩图完成");
+  ensureBrowserNotificationPermission().then((granted) => {
+    if (granted) sendBrowserNotification("扩图完成", `${ratio}x 扩图已完成`);
+  }).catch(() => {});
+}
 
 bootstrap();

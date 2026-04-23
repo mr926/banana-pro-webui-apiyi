@@ -47,6 +47,71 @@ function getTransferImageUrl(entry) {
   return String(entry?.imageUrl || getPreferredImageUrl(entry) || "").trim();
 }
 
+function getOssUploadStatus(entry) {
+  return String(entry?.ossUploadStatus || "").trim().toLowerCase();
+}
+
+function isOssUploadPending(entry) {
+  return ["queued", "uploading", "retrying"].includes(getOssUploadStatus(entry));
+}
+
+function getOssStatusPresentation(entry) {
+  const status = getOssUploadStatus(entry);
+  if (status === "queued") {
+    return {
+      label: "OSS 排队中",
+      tone: "warning",
+      placeholderTitle: "正在排队上传到 OSS",
+      placeholderText: "图片已生成完成，后台会按顺序上传，当前不加载预览图。",
+    };
+  }
+  if (status === "uploading") {
+    return {
+      label: "OSS 上传中",
+      tone: "info",
+      placeholderTitle: "正在上传到 OSS",
+      placeholderText: "为了节省带宽，上传完成前不自动拉取图片预览。",
+    };
+  }
+  if (status === "retrying") {
+    return {
+      label: "OSS 重试中",
+      tone: "warning",
+      placeholderTitle: "OSS 正在重试上传",
+      placeholderText: "上一轮上传失败，后台正在自动重试，当前不显示图片。",
+    };
+  }
+  if (status === "uploaded") {
+    return { label: "OSS 已同步", tone: "success" };
+  }
+  if (status === "failed") {
+    return { label: "OSS 上传失败", tone: "danger" };
+  }
+  return null;
+}
+
+function buildPendingMediaPlaceholderMarkup(entry, compact = false) {
+  const status = getOssStatusPresentation(entry);
+  const title = status?.placeholderTitle || "正在处理中";
+  const text = status?.placeholderText || "当前不加载图片预览。";
+  return `
+    <div class="media-upload-placeholder${compact ? " is-compact" : ""}">
+      <div class="media-upload-placeholder-icon">⇪</div>
+      <h3>${title}</h3>
+      <p>${text}</p>
+    </div>
+  `;
+}
+
+function appendMediaStatusBadge(container, entry) {
+  const status = getOssStatusPresentation(entry);
+  if (!container || !status) return;
+  const badge = document.createElement("span");
+  badge.className = `media-status-badge is-${status.tone}`;
+  badge.textContent = status.label;
+  container.appendChild(badge);
+}
+
 function setAlbumAuthStatus(message, isError = false) {
   albumAuthStatus.textContent = message || "";
   albumAuthStatus.style.color = isError ? "#d14343" : "";
@@ -453,18 +518,30 @@ function renderAlbum(items) {
   albumState.items.forEach((entry) => {
     const node = albumTemplate.content.firstElementChild.cloneNode(true);
     const image = node.querySelector(".album-image");
+    const imageWrap = node.querySelector(".album-image-wrap");
     const selector = node.querySelector(".album-select");
     const copyButton = node.querySelector(".album-copy");
     const sendBaseButton = node.querySelector(".album-send-base");
     const sendReferenceButton = node.querySelector(".album-send-reference");
     const downloadLink = node.querySelector(".album-download");
+    const openLink = node.querySelector(".album-open");
     const hasValidId = typeof entry.id === "string" && entry.id;
     const thumbUrl = getPreferredThumbUrl(entry) || getPreferredImageUrl(entry);
     const imageUrl = getPreferredImageUrl(entry);
-    image.src = thumbUrl;
-    image.alt = entry.prompt || "历史相册图片";
-    image.loading = "lazy";
-    image.decoding = "async";
+    const pendingUpload = isOssUploadPending(entry);
+    if (pendingUpload) {
+      image.removeAttribute("src");
+      image.hidden = true;
+      imageWrap?.classList.add("is-upload-pending");
+      imageWrap?.insertAdjacentHTML("beforeend", buildPendingMediaPlaceholderMarkup(entry, true));
+    } else {
+      image.src = thumbUrl;
+      image.alt = entry.prompt || "历史相册图片";
+      image.loading = "lazy";
+      image.decoding = "async";
+      image.hidden = false;
+    }
+    appendMediaStatusBadge(imageWrap, entry);
     selector.checked = hasValidId ? albumState.selectedIds.has(entry.id) : false;
     selector.disabled = !hasValidId;
     selector.addEventListener("change", () => {
@@ -477,9 +554,23 @@ function renderAlbum(items) {
       syncAlbumToolbar();
     });
     node.querySelector(".album-time").textContent = formatAlbumDate(entry.createdAt);
-    node.querySelector(".album-tags").textContent = `${entry.aspectRatio} · ${entry.imageSize}`;
+    node.querySelector(".album-tags").textContent = [
+      entry.aspectRatio,
+      entry.imageSize,
+      getOssStatusPresentation(entry)?.label || "",
+    ].filter(Boolean).join(" · ");
     node.querySelector(".album-prompt").textContent = entry.prompt || "未填写提示词";
-    node.querySelector(".album-open").href = imageUrl;
+    if (pendingUpload) {
+      openLink.removeAttribute("href");
+      openLink.setAttribute("aria-disabled", "true");
+      openLink.textContent = "上传中";
+      openLink.classList.add("is-disabled");
+    } else {
+      openLink.href = imageUrl;
+      openLink.removeAttribute("aria-disabled");
+      openLink.textContent = "查看";
+      openLink.classList.remove("is-disabled");
+    }
     downloadLink.href = imageUrl;
     downloadLink.download = entry.downloadName || "banana-pro-image";
     downloadLink.textContent = getDownloadActionLabel("single");

@@ -20,7 +20,11 @@
       <!-- ── Top Header ── -->
       <header class="page-header">
         <div class="header-brand">
-          <span class="header-logo">Banana 图生图</span>
+          <select id="mode-select" class="mode-select" aria-label="选择工作模式">
+            <option value="img2img">Banana 图生图</option>
+            <option value="txt2img">文生图</option>
+            <option value="upscale">扩图</option>
+          </select>
           <span class="header-pro-badge">Pro</span>
         </div>
         <!-- Overview chips — updated by JS -->
@@ -89,7 +93,29 @@
             </div>
           </section>
 
-          <!-- ② 风格参考图 — 默认展开 -->
+          <!-- ② 扩图倍率 — 仅扩图模式显示 -->
+          <section class="param-section hidden" data-section="upscale-options" id="section-upscale-options">
+            <div class="param-section-header" aria-expanded="true" aria-controls="section-upscale-options-body">
+              <div class="param-section-title">
+                <span class="param-section-step">2</span>
+                放大倍率
+              </div>
+              <div class="param-section-chevron">
+                <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <polyline points="2 4 6 8 10 4"/>
+                </svg>
+              </div>
+            </div>
+            <div class="param-section-body" id="section-upscale-options-body">
+              <p class="param-section-hint">原图将按宫格拆分，每格单独发给 Banana Pro 生成 4K 细节图，最终拼合成完整大图。</p>
+              <div class="segment-grid">
+                <label class="segment"><input type="radio" name="upscaleRatio" value="2" checked /><span>2x（四宫格）</span></label>
+                <label class="segment"><input type="radio" name="upscaleRatio" value="3" /><span>3x（九宫格）</span></label>
+              </div>
+            </div>
+          </section>
+
+          <!-- ③ 风格参考图 — 默认展开 -->
           <section class="param-section" data-section="reference">
             <div class="param-section-header" aria-expanded="true" aria-controls="section-ref-body">
               <div class="param-section-title">
@@ -293,6 +319,8 @@
             <h2>当前结果</h2>
             <div id="result-meta" class="result-meta"></div>
           </div>
+          <!-- 扩图多进度条区域 -->
+          <div id="upscale-progress-container" class="upscale-progress-container hidden"></div>
           <div id="result-stage" class="result-stage empty">
             <div class="placeholder">
               <div class="placeholder-icon">▣</div>
@@ -363,6 +391,21 @@
                 <span class="upload-zone-label">上传基础图（必填）</span>
               </label>
               <div id="base-preview-m" class="thumb-grid single"></div>
+            </div>
+          </section>
+
+          <section class="param-section hidden" data-section="upscale-options-m" id="section-upscale-options-m">
+            <div class="param-section-header" aria-expanded="true">
+              <div class="param-section-title">
+                <span class="param-section-step">2</span>放大倍率
+              </div>
+              <div class="param-section-chevron"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="2 4 6 8 10 4"/></svg></div>
+            </div>
+            <div class="param-section-body">
+              <div class="segment-grid">
+                <label class="segment"><input type="radio" name="upscaleRatio-m" value="2" checked /><span>2x（四宫格）</span></label>
+                <label class="segment"><input type="radio" name="upscaleRatio-m" value="3" /><span>3x（九宫格）</span></label>
+              </div>
             </div>
           </section>
 
@@ -471,6 +514,7 @@
             <h2>当前结果</h2>
             <div id="result-meta-mobile" class="result-meta"></div>
           </div>
+          <div id="upscale-progress-container-mobile" class="upscale-progress-container hidden"></div>
           <div id="result-stage-mobile" class="result-stage empty">
             <div class="placeholder">
               <div class="placeholder-icon">▣</div>
