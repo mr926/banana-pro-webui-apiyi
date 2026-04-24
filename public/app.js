@@ -70,6 +70,9 @@ const state = {
   currentResult: null,
   progressTimer: null,
   optimizeProgressTimer: null,
+  ossSyncTimer: null,
+  ossSyncRequest: null,
+  ossSyncTrackedId: "",
   progressValue: 0,
   optimizeProgressValue: 0,
   notificationPermissionPromise: null,
@@ -390,6 +393,51 @@ function isOssUploadPending(entry) {
   return ["queued", "uploading", "retrying"].includes(getOssUploadStatus(entry));
 }
 
+function getOssUploadProgress(entry) {
+  const status = getOssUploadStatus(entry);
+  const fallbackByStatus = {
+    queued: 0,
+    uploading: 12,
+    retrying: 8,
+    uploaded: 100,
+    failed: 0,
+  };
+  const raw = Number(entry?.ossUploadProgress);
+  const fallback = fallbackByStatus[status] ?? 0;
+  if (!Number.isFinite(raw)) {
+    return fallback;
+  }
+  return Math.max(0, Math.min(100, Math.round(raw)));
+}
+
+function getOssUploadProgressLabel(entry) {
+  const explicit = String(entry?.ossUploadProgressLabel || "").trim();
+  if (explicit) return explicit;
+  const status = getOssUploadStatus(entry);
+  if (status === "queued") return "等待轮到当前任务";
+  if (status === "uploading") return "正在上传原图";
+  if (status === "retrying") return "等待自动重试";
+  if (status === "uploaded") return "原图、缩略图和 XML 已同步到 OSS";
+  if (status === "failed") return "上传失败";
+  return "";
+}
+
+function getOssQueueAheadCount(entry) {
+  const raw = Number(entry?.ossQueueAheadCount);
+  if (!Number.isFinite(raw)) return 0;
+  return Math.max(0, Math.round(raw));
+}
+
+function getOssQueueHintText(entry) {
+  const status = getOssUploadStatus(entry);
+  if (status === "queued") {
+    const ahead = getOssQueueAheadCount(entry);
+    return ahead > 0 ? `前方还有 ${ahead} 张图片等待上传。` : "前方没有排队任务，即将开始上传。";
+  }
+  const progressLabel = getOssUploadProgressLabel(entry);
+  return progressLabel || "";
+}
+
 function getOssStatusPresentation(entry) {
   const status = getOssUploadStatus(entry);
   if (status === "queued") {
@@ -429,11 +477,24 @@ function buildPendingMediaPlaceholderMarkup(entry, compact = false) {
   const status = getOssStatusPresentation(entry);
   const title = status?.placeholderTitle || "正在处理中";
   const text = status?.placeholderText || "当前暂不加载图片预览。";
+  const progress = getOssUploadProgress(entry);
+  const progressLabel = getOssUploadProgressLabel(entry);
+  const queueHint = getOssQueueHintText(entry);
   return `
     <div class="media-upload-placeholder${compact ? " is-compact" : ""}">
       <div class="media-upload-placeholder-icon">⇪</div>
       <h3>${title}</h3>
       <p>${text}</p>
+      <div class="media-upload-progress${compact ? " is-compact" : ""}">
+        <div class="media-upload-progress-track">
+          <div class="media-upload-progress-fill" style="width:${progress}%"></div>
+        </div>
+        <div class="media-upload-progress-meta">
+          <strong>${progressLabel || "处理中"}</strong>
+          <span>${progress}%</span>
+        </div>
+      </div>
+      ${queueHint ? `<p class="media-upload-placeholder-detail">${queueHint}</p>` : ""}
     </div>
   `;
 }
@@ -1094,6 +1155,112 @@ function setStatus(message, isError = false) {
     node.textContent = message || "";
     node.style.color = isError ? "#d14343" : "";
   });
+}
+
+function clearCurrentResultOssSync() {
+  if (state.ossSyncTimer) {
+    window.clearTimeout(state.ossSyncTimer);
+    state.ossSyncTimer = null;
+  }
+  if (state.ossSyncRequest?.abort) {
+    state.ossSyncRequest.abort();
+  }
+  state.ossSyncRequest = null;
+  state.ossSyncTrackedId = "";
+}
+
+function scheduleCurrentResultOssSync(delay = 2500) {
+  if (!state.currentResult?.id || !isOssUploadPending(state.currentResult)) {
+    clearCurrentResultOssSync();
+    return;
+  }
+  if (state.ossSyncTimer) {
+    window.clearTimeout(state.ossSyncTimer);
+  }
+  state.ossSyncTrackedId = String(state.currentResult.id);
+  state.ossSyncTimer = window.setTimeout(() => {
+    state.ossSyncTimer = null;
+    void syncCurrentResultFromHistory();
+  }, Math.max(600, Number(delay) || 2500));
+}
+
+async function syncCurrentResultFromHistory() {
+  const currentId = String(state.currentResult?.id || "").trim();
+  if (!currentId || !isOssUploadPending(state.currentResult)) {
+    clearCurrentResultOssSync();
+    return;
+  }
+  if (state.ossSyncTrackedId && state.ossSyncTrackedId !== currentId) {
+    clearCurrentResultOssSync();
+    return;
+  }
+
+  if (state.ossSyncRequest?.abort) {
+    state.ossSyncRequest.abort();
+  }
+
+  const controller = new AbortController();
+  state.ossSyncRequest = controller;
+
+  try {
+    const response = await fetch(`/api/history/${encodeURIComponent(currentId)}`, {
+      signal: controller.signal,
+    });
+    if (state.ossSyncRequest !== controller) {
+      return;
+    }
+
+    if (response.status === 401) {
+      clearCurrentResultOssSync();
+      setAuthUI(false, true);
+      return;
+    }
+
+    if (!response.ok) {
+      throw new Error("刷新当前图片状态失败。");
+    }
+
+    const latestEntry = await readJsonSafely(response);
+    const previousStatus = getOssUploadStatus(state.currentResult);
+    const nextStatus = getOssUploadStatus(latestEntry);
+    const didStatusChange = previousStatus !== nextStatus;
+    const didImageChange =
+      getPreferredImageUrl(state.currentResult) !== getPreferredImageUrl(latestEntry) ||
+      getPreferredThumbUrl(state.currentResult) !== getPreferredThumbUrl(latestEntry);
+    const didProgressChange =
+      getOssUploadProgress(state.currentResult) !== getOssUploadProgress(latestEntry) ||
+      getOssUploadProgressLabel(state.currentResult) !== getOssUploadProgressLabel(latestEntry);
+    const didQueueChange =
+      getOssQueueAheadCount(state.currentResult) !== getOssQueueAheadCount(latestEntry);
+
+    renderCurrentResult(latestEntry);
+
+    if ((didStatusChange || didImageChange || didProgressChange || didQueueChange) && state.historyHydrated) {
+      void loadHistory(state.historyPage);
+    }
+
+    if (!isOssUploadPending(latestEntry)) {
+      if (nextStatus === "uploaded") {
+        setStatus("OSS 上传完成，当前结果已自动更新。");
+      } else if (nextStatus === "failed") {
+        const reason = extractErrorMessage(latestEntry?.ossUploadError) || "请稍后重试。";
+        setStatus(`OSS 上传失败：${reason}`, true);
+      }
+      clearCurrentResultOssSync();
+      return;
+    }
+
+    scheduleCurrentResultOssSync(nextStatus === "queued" ? 2500 : 1800);
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      return;
+    }
+    scheduleCurrentResultOssSync(3500);
+  } finally {
+    if (state.ossSyncRequest === controller) {
+      state.ossSyncRequest = null;
+    }
+  }
 }
 
 function setOptimizeStatus(message, isError = false) {
@@ -1984,6 +2151,7 @@ function bindResultActions(stage, entry) {
 }
 
 function renderCurrentResult(entry) {
+  clearCurrentResultOssSync();
   state.currentResult = entry;
   renderMeta(entry);
 
@@ -2024,6 +2192,10 @@ function renderCurrentResult(entry) {
     `;
     bindResultActions(stage, entry);
   });
+
+  if (isOssUploadPending(entry)) {
+    scheduleCurrentResultOssSync();
+  }
 }
 
 function clearProgress() {

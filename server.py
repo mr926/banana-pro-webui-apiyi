@@ -26,7 +26,7 @@ from http import client as http_client
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from queue import Queue
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import parse_qsl, quote, unquote, urlencode, urlparse, urlunparse
 
 try:
@@ -86,6 +86,7 @@ OSS_UPLOAD_QUEUE: "Queue[str]" = Queue()
 OSS_UPLOAD_QUEUE_IDS: Set[str] = set()
 OSS_UPLOAD_QUEUE_LOCK = threading.Lock()
 OSS_UPLOAD_WORKER: Optional[threading.Thread] = None
+OSS_UPLOAD_ACTIVE_ITEM_ID = ""
 OSS_UPLOAD_MAX_ATTEMPTS = 3
 OSS_UPLOAD_RETRY_BASE_DELAY_SECONDS = 5
 
@@ -663,6 +664,7 @@ def upload_generated_assets_to_oss(
     thumb_bytes: bytes,
     metadata_filename: str,
     metadata_bytes: bytes,
+    progress_callback: Optional[Callable[[int, str], None]] = None,
 ) -> dict:
     # Group objects by YYMM folder, e.g. 2603.
     date_segment = now.strftime("%y%m")
@@ -670,14 +672,22 @@ def upload_generated_assets_to_oss(
     image_key = build_oss_object_key(config["prefix"], date_segment, "", image_filename)
     thumb_key = build_oss_object_key(config["prefix"], date_segment, "thumbs", thumb_filename)
     metadata_key = build_oss_object_key(config["prefix"], date_segment, "XML", metadata_filename)
+    if progress_callback is not None:
+        progress_callback(12, "正在上传原图")
     image_url = upload_bytes_to_oss(config, image_key, image_bytes, image_mime_type)
+    if progress_callback is not None:
+        progress_callback(58, "原图已上传，正在上传缩略图")
     thumb_url = upload_bytes_to_oss(config, thumb_key, thumb_bytes, "image/jpeg")
+    if progress_callback is not None:
+        progress_callback(84, "缩略图已上传，正在上传 XML")
     metadata_url = upload_bytes_to_oss(
         config,
         metadata_key,
         metadata_bytes,
         "application/xml; charset=utf-8",
     )
+    if progress_callback is not None:
+        progress_callback(96, "XML 已上传，正在整理结果")
     return {
         "image_url": image_url,
         "thumb_url": thumb_url,
@@ -760,6 +770,72 @@ def append_history(entry: dict) -> None:
         history = read_history_unlocked()
         history.insert(0, entry)
         write_history_unlocked(history)
+
+
+def build_oss_queue_runtime_snapshot() -> Tuple[List[str], str]:
+    with OSS_UPLOAD_QUEUE_LOCK:
+        queued_ids = [str(item or "").strip() for item in list(getattr(OSS_UPLOAD_QUEUE, "queue", []))]
+        active_item_id = str(OSS_UPLOAD_ACTIVE_ITEM_ID or "").strip()
+    return queued_ids, active_item_id
+
+
+def parse_oss_progress_value(value: object, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(0, min(parsed, 100))
+
+
+def decorate_history_entry_for_client(
+    entry: dict,
+    *,
+    queue_snapshot: Optional[Tuple[List[str], str]] = None,
+) -> dict:
+    decorated = dict(entry or {})
+    status = str(decorated.get("ossUploadStatus", "")).strip().lower()
+    if not status:
+        return decorated
+
+    if queue_snapshot is None:
+        queue_snapshot = build_oss_queue_runtime_snapshot()
+    queued_ids, active_item_id = queue_snapshot
+    item_id = str(decorated.get("id", "")).strip()
+
+    attempts_raw = decorated.get("ossUploadAttempts", 0)
+    try:
+        attempts = max(0, int(attempts_raw))
+    except (TypeError, ValueError):
+        attempts = 0
+
+    queue_ahead_count = 0
+    if status == "queued" and item_id:
+        if active_item_id and active_item_id != item_id:
+            queue_ahead_count += 1
+        try:
+            queue_ahead_count += queued_ids.index(item_id)
+        except ValueError:
+            queue_ahead_count = 0
+
+    defaults = {
+        "queued": (0, "等待轮到当前任务"),
+        "uploading": (12, "正在上传原图"),
+        "retrying": (8, f"等待第 {attempts + 1} 次自动重试"),
+        "uploaded": (100, "原图、缩略图和 XML 已同步到 OSS"),
+        "failed": (0, "上传失败"),
+    }
+    default_progress, default_label = defaults.get(status, (0, ""))
+
+    decorated["ossQueueAheadCount"] = queue_ahead_count if status == "queued" else 0
+    decorated["ossQueuePosition"] = (queue_ahead_count + 1) if status == "queued" else 0
+    decorated["ossUploadProgress"] = parse_oss_progress_value(
+        decorated.get("ossUploadProgress"),
+        default_progress,
+    )
+    decorated["ossUploadProgressLabel"] = str(
+        decorated.get("ossUploadProgressLabel") or default_label
+    ).strip() or default_label
+    return decorated
 
 
 def get_history_entry(item_id: str) -> Optional[dict]:
@@ -940,7 +1016,15 @@ def process_oss_upload_queue_item(item_id: str) -> None:
     if entry is None:
         return
     if entry.get("ossImageUrl") and entry.get("ossThumbUrl"):
-        update_history_entry(item_id, {"ossUploadStatus": "uploaded"}, remove_keys=["ossUploadError"])
+        update_history_entry(
+            item_id,
+            {
+                "ossUploadStatus": "uploaded",
+                "ossUploadProgress": 100,
+                "ossUploadProgressLabel": "原图、缩略图和 XML 已同步到 OSS",
+            },
+            remove_keys=["ossUploadError"],
+        )
         return
 
     image_path = get_local_image_cache_path(entry)
@@ -950,6 +1034,8 @@ def process_oss_upload_queue_item(item_id: str) -> None:
             item_id,
             {
                 "ossUploadStatus": "failed",
+                "ossUploadProgress": 0,
+                "ossUploadProgressLabel": "上传失败",
                 "ossUploadError": "本地原图不存在，无法上传到 OSS。",
             },
         )
@@ -959,6 +1045,8 @@ def process_oss_upload_queue_item(item_id: str) -> None:
             item_id,
             {
                 "ossUploadStatus": "failed",
+                "ossUploadProgress": 0,
+                "ossUploadProgressLabel": "上传失败",
                 "ossUploadError": "本地缩略图不存在，无法上传到 OSS。",
             },
         )
@@ -979,6 +1067,10 @@ def process_oss_upload_queue_item(item_id: str) -> None:
             {
                 "ossUploadStatus": "uploading",
                 "ossUploadAttempts": attempt,
+                "ossUploadProgress": 8,
+                "ossUploadProgressLabel": (
+                    "正在上传原图" if attempt == 1 else f"正在进行第 {attempt} 次上传"
+                ),
                 "ossLastUploadAttemptAt": datetime.now().isoformat(timespec="seconds"),
             },
             remove_keys=["ossUploadError"],
@@ -995,6 +1087,17 @@ def process_oss_upload_queue_item(item_id: str) -> None:
                 thumb_bytes=thumb_path.read_bytes(),
                 metadata_filename=metadata_filename,
                 metadata_bytes=metadata_bytes,
+                progress_callback=lambda progress, label: update_history_entry(
+                    item_id,
+                    {
+                        "ossUploadStatus": "uploading",
+                        "ossUploadAttempts": attempt,
+                        "ossUploadProgress": progress,
+                        "ossUploadProgressLabel": label,
+                        "ossLastUploadAttemptAt": datetime.now().isoformat(timespec="seconds"),
+                    },
+                    remove_keys=["ossUploadError"],
+                ),
             )
             update_history_entry(
                 item_id,
@@ -1008,6 +1111,8 @@ def process_oss_upload_queue_item(item_id: str) -> None:
                     "ossThumbKey": uploaded["thumb_key"],
                     "ossMetadataXmlKey": uploaded["metadata_key"],
                     "ossUploadStatus": "uploaded",
+                    "ossUploadProgress": 100,
+                    "ossUploadProgressLabel": "原图、缩略图和 XML 已同步到 OSS",
                     "ossUploadCompletedAt": datetime.now().isoformat(timespec="seconds"),
                 },
                 remove_keys=["ossUploadError"],
@@ -1017,17 +1122,24 @@ def process_oss_upload_queue_item(item_id: str) -> None:
             return
         except Exception as exc:
             last_error = str(exc)
+            retry_delay_seconds = OSS_UPLOAD_RETRY_BASE_DELAY_SECONDS * attempt if attempt < OSS_UPLOAD_MAX_ATTEMPTS else 0
             update_history_entry(
                 item_id,
                 {
                     "ossUploadStatus": "retrying" if attempt < OSS_UPLOAD_MAX_ATTEMPTS else "failed",
                     "ossUploadAttempts": attempt,
+                    "ossUploadProgress": 8 if attempt < OSS_UPLOAD_MAX_ATTEMPTS else 0,
+                    "ossUploadProgressLabel": (
+                        f"本次上传失败，{retry_delay_seconds} 秒后自动重试"
+                        if attempt < OSS_UPLOAD_MAX_ATTEMPTS
+                        else "上传失败"
+                    ),
                     "ossUploadError": last_error,
                     "ossLastUploadAttemptAt": datetime.now().isoformat(timespec="seconds"),
                 },
             )
             if attempt < OSS_UPLOAD_MAX_ATTEMPTS:
-                delay_seconds = OSS_UPLOAD_RETRY_BASE_DELAY_SECONDS * attempt
+                delay_seconds = retry_delay_seconds
                 log_runtime(
                     f"OSS 上传失败，准备重试（{item_id}，第 {attempt} 次）：{last_error}"
                 )
@@ -1037,9 +1149,12 @@ def process_oss_upload_queue_item(item_id: str) -> None:
 
 
 def oss_upload_worker_main() -> None:
+    global OSS_UPLOAD_ACTIVE_ITEM_ID
     log_runtime("OSS 上传队列已启动，当前并发数为 1。")
     while True:
         item_id = OSS_UPLOAD_QUEUE.get()
+        with OSS_UPLOAD_QUEUE_LOCK:
+            OSS_UPLOAD_ACTIVE_ITEM_ID = str(item_id or "").strip()
         try:
             process_oss_upload_queue_item(item_id)
         except Exception as exc:
@@ -1047,12 +1162,17 @@ def oss_upload_worker_main() -> None:
                 item_id,
                 {
                     "ossUploadStatus": "failed",
+                    "ossUploadProgress": 0,
+                    "ossUploadProgressLabel": "上传失败",
                     "ossUploadError": str(exc),
                     "ossLastUploadAttemptAt": datetime.now().isoformat(timespec="seconds"),
                 },
             )
             log_runtime(f"OSS 上传队列任务异常：{item_id}，原因：{exc}")
         finally:
+            with OSS_UPLOAD_QUEUE_LOCK:
+                if OSS_UPLOAD_ACTIVE_ITEM_ID == str(item_id or "").strip():
+                    OSS_UPLOAD_ACTIVE_ITEM_ID = ""
             clear_oss_upload_queue_marker(item_id)
             OSS_UPLOAD_QUEUE.task_done()
 
@@ -1254,13 +1374,20 @@ def read_history_with_thumbnails() -> List[dict]:
 
 def build_history_response_payload(query_string: str = "") -> dict:
     history = read_history_with_thumbnails()
+    queue_snapshot = build_oss_queue_runtime_snapshot()
     total = len(history)
     query = dict(parse_qsl(query_string, keep_blank_values=True))
     paginated = any(key in query for key in ("page", "pageSize", "page_size"))
 
+    def decorate_items(items: List[dict]) -> List[dict]:
+        return [
+            decorate_history_entry_for_client(item, queue_snapshot=queue_snapshot)
+            for item in items
+        ]
+
     if not paginated:
         return {
-            "items": history,
+            "items": decorate_items(history),
             "total": total,
             "page": 1,
             "pageSize": total if total > 0 else 0,
@@ -1282,7 +1409,7 @@ def build_history_response_payload(query_string: str = "") -> dict:
     end = start + page_size
 
     return {
-        "items": history[start:end],
+        "items": decorate_items(history[start:end]),
         "total": total,
         "page": effective_page,
         "pageSize": page_size,
@@ -2153,6 +2280,17 @@ class AppHandler(BaseHTTPRequestHandler):
                 return json_response(self, 500, {"error": str(exc)})
             return json_response(self, 200, payload)
 
+        if parsed.path.startswith("/api/history/"):
+            if not self.ensure_authenticated():
+                return
+            item_id = parsed.path.removeprefix("/api/history/").strip()
+            if not item_id:
+                return json_response(self, 400, {"error": "缺少要查询的记录 id。"})
+            entry = get_history_entry(item_id)
+            if entry is None:
+                return json_response(self, 404, {"error": "未找到对应的历史记录。"})
+            return json_response(self, 200, decorate_history_entry_for_client(entry))
+
         if parsed.path.startswith("/generated/"):
             if not self.ensure_authenticated():
                 return
@@ -2576,12 +2714,16 @@ class AppHandler(BaseHTTPRequestHandler):
                     file_id,
                     {
                         "ossUploadStatus": "failed",
+                        "ossUploadProgress": 0,
+                        "ossUploadProgressLabel": "上传失败",
                         "ossUploadError": "OSS 上传任务入队失败。",
                     },
                 )
                 entry["ossUploadStatus"] = "failed"
+                entry["ossUploadProgress"] = 0
+                entry["ossUploadProgressLabel"] = "上传失败"
                 entry["ossUploadError"] = "OSS 上传任务入队失败。"
-        json_response(self, 200, entry)
+        json_response(self, 200, decorate_history_entry_for_client(entry))
 
     def handle_upscale_tile(self) -> None:
         if Image is None:

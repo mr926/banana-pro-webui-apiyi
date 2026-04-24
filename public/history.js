@@ -55,6 +55,51 @@ function isOssUploadPending(entry) {
   return ["queued", "uploading", "retrying"].includes(getOssUploadStatus(entry));
 }
 
+function getOssUploadProgress(entry) {
+  const status = getOssUploadStatus(entry);
+  const fallbackByStatus = {
+    queued: 0,
+    uploading: 12,
+    retrying: 8,
+    uploaded: 100,
+    failed: 0,
+  };
+  const raw = Number(entry?.ossUploadProgress);
+  const fallback = fallbackByStatus[status] ?? 0;
+  if (!Number.isFinite(raw)) {
+    return fallback;
+  }
+  return Math.max(0, Math.min(100, Math.round(raw)));
+}
+
+function getOssUploadProgressLabel(entry) {
+  const explicit = String(entry?.ossUploadProgressLabel || "").trim();
+  if (explicit) return explicit;
+  const status = getOssUploadStatus(entry);
+  if (status === "queued") return "等待轮到当前任务";
+  if (status === "uploading") return "正在上传原图";
+  if (status === "retrying") return "等待自动重试";
+  if (status === "uploaded") return "原图、缩略图和 XML 已同步到 OSS";
+  if (status === "failed") return "上传失败";
+  return "";
+}
+
+function getOssQueueAheadCount(entry) {
+  const raw = Number(entry?.ossQueueAheadCount);
+  if (!Number.isFinite(raw)) return 0;
+  return Math.max(0, Math.round(raw));
+}
+
+function getOssQueueHintText(entry) {
+  const status = getOssUploadStatus(entry);
+  if (status === "queued") {
+    const ahead = getOssQueueAheadCount(entry);
+    return ahead > 0 ? `前方还有 ${ahead} 张图片等待上传。` : "前方没有排队任务，即将开始上传。";
+  }
+  const progressLabel = getOssUploadProgressLabel(entry);
+  return progressLabel || "";
+}
+
 function getOssStatusPresentation(entry) {
   const status = getOssUploadStatus(entry);
   if (status === "queued") {
@@ -94,11 +139,24 @@ function buildPendingMediaPlaceholderMarkup(entry, compact = false) {
   const status = getOssStatusPresentation(entry);
   const title = status?.placeholderTitle || "正在处理中";
   const text = status?.placeholderText || "当前不加载图片预览。";
+  const progress = getOssUploadProgress(entry);
+  const progressLabel = getOssUploadProgressLabel(entry);
+  const queueHint = getOssQueueHintText(entry);
   return `
     <div class="media-upload-placeholder${compact ? " is-compact" : ""}">
       <div class="media-upload-placeholder-icon">⇪</div>
       <h3>${title}</h3>
       <p>${text}</p>
+      <div class="media-upload-progress${compact ? " is-compact" : ""}">
+        <div class="media-upload-progress-track">
+          <div class="media-upload-progress-fill" style="width:${progress}%"></div>
+        </div>
+        <div class="media-upload-progress-meta">
+          <strong>${progressLabel || "处理中"}</strong>
+          <span>${progress}%</span>
+        </div>
+      </div>
+      ${queueHint ? `<p class="media-upload-placeholder-detail">${queueHint}</p>` : ""}
     </div>
   `;
 }
