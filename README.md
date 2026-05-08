@@ -87,13 +87,15 @@ docker compose up -d
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
 <apiPlatforms version="1">
-  <platform id="apiyi" name="APIYI" default="true" defaultModel="gemini-3-pro-image-preview">
-    <url>https://api.apiyi.com/v1beta/models/{model}:generateContent</url>
+  <platform id="Grsai" name="Grsai" default="true" defaultModel="nano-banana-2">
+    <url>https://grsai.dakka.com.cn/v1/api/generate</url>
     <key></key>
-    <models separator="|">gemini-3-pro-image-preview|gemini-3.1-flash-image-preview-4k</models>
+    <models separator="|">nano-banana-2</models>
   </platform>
 </apiPlatforms>
 ```
+
+Grsai 使用 `/v1/api/generate` 时，请求体会按 Grsai 文档发送 `model / prompt / images / aspectRatio / imageSize / replyType`；若接口返回异步 `id`，服务端会继续查询 `/v1/api/result` 并下载 `results[].url` 到本地历史。
 
 多个平台直接复制 `<platform>` 节点。`key` 建议在本地填写，不要提交到仓库。
 

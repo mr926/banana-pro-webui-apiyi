@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <apiPlatforms version="1">
-  <platform id="Grsai" name="Grsai" default="true"  defaultModel="nano-banana-pro">
-    <url>https://grsai.dakka.com.cn/v1beta/models/{model}:generateContent</url>
+  <platform id="Grsai" name="Grsai" default="true"  defaultModel="nano-banana-2">
+    <url>https://grsai.dakka.com.cn/v1/api/generate</url>
     <key>sk-d3646943df7a4c449210f926649a2308</key>
     <models separator="|">nano-banana-pro|nano-banana-pro-vt|nano-banana-pro-cl|nano-banana-pro-vip|nano-banana-pro-4k-vip|nano-banana-2</models>
   </platform>
@@ -15,9 +15,9 @@
   一个平台对应一个 url 和一个 key，models 里可用 separator 指定的符号分隔多个模型。
 
   <platform id="another-provider" name="Another Provider">
-    <url>https://grsai.dakka.com.cn/v1beta/models/{model}:generateContent</url>
+    <url>https://grsai.dakka.com.cn/v1/api/generate</url>
     <key>sk-d3646943df7a4c449210f926649a2308</key>
-    <models separator="|">nano-banana-pro|nano-banana-2</models>
+    <models separator="|">nano-banana-2</models>
   </platform>
   -->
 </apiPlatforms>

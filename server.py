@@ -76,6 +76,8 @@ TIMEOUT_MAP = {"1K": 180, "2K": 300, "4K": 360}
 PROMPT_OPTIMIZER_TIMEOUT = 90
 UPSTREAM_MAX_ATTEMPTS = 2
 RETRYABLE_UPSTREAM_STATUS_CODES = {408, 429, 500, 502, 503, 504}
+SUCCESS_GENERATION_STATUSES = {"succeeded", "success", "completed", "complete", "done"}
+FAILED_GENERATION_STATUSES = {"failed", "failure", "error", "cancelled", "canceled", "expired"}
 SESSION_COOKIE_NAME = "banana_ui_session"
 SESSION_MAX_AGE = 7 * 24 * 3600  # 7 days in seconds
 # SESSIONS: token -> expiry timestamp (float). Persisted to data/sessions.json.
@@ -400,6 +402,13 @@ def build_authenticated_request(api_url: str, body: bytes, api_key: str) -> urll
     return urllib.request.Request(request_url, data=body, headers=headers, method="POST")
 
 
+def build_authenticated_get_request(api_url: str, api_key: str) -> urllib.request.Request:
+    headers = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return urllib.request.Request(str(api_url or "").strip(), headers=headers, method="GET")
+
+
 class UpstreamHttpError(Exception):
     def __init__(self, status_code: int, details: str):
         super().__init__(details)
@@ -455,6 +464,26 @@ def post_json_to_upstream(api_url: str, body: bytes, api_key: str, timeout: int)
     attempts = max(1, UPSTREAM_MAX_ATTEMPTS)
     for attempt in range(1, attempts + 1):
         request = build_authenticated_request(api_url, body, api_key)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            if attempt < attempts and exc.code in RETRYABLE_UPSTREAM_STATUS_CODES:
+                time.sleep(min(0.8 * attempt, 1.6))
+                continue
+            raise UpstreamHttpError(exc.code, raw) from exc
+        except Exception as exc:
+            if attempt < attempts and is_retryable_upstream_exception(exc):
+                time.sleep(min(0.8 * attempt, 1.6))
+                continue
+            raise RuntimeError(describe_upstream_exception(exc)) from exc
+
+
+def get_json_from_upstream(api_url: str, api_key: str, timeout: int) -> dict:
+    attempts = max(1, UPSTREAM_MAX_ATTEMPTS)
+    for attempt in range(1, attempts + 1):
+        request = build_authenticated_get_request(api_url, api_key)
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
@@ -1709,6 +1738,23 @@ def resolve_image_generation_api_url(api_url: str, image_model: str) -> str:
     return configured_url
 
 
+def is_grsai_api_generate_endpoint(api_url: str) -> bool:
+    parsed = urlparse(str(api_url or "").strip())
+    return parsed.path.rstrip("/") == "/v1/api/generate"
+
+
+def build_grsai_result_url(api_url: str, result_id: str) -> str:
+    parsed = urlparse(str(api_url or "").strip())
+    return urlunparse(
+        parsed._replace(
+            path="/v1/api/result",
+            params="",
+            query=urlencode({"id": result_id}),
+            fragment="",
+        )
+    )
+
+
 def build_prompt(user_prompt: str, reference_count: int, has_base_image: bool = True) -> str:
     if has_base_image:
         base = (
@@ -1792,6 +1838,30 @@ def build_payload(
     return payload
 
 
+def build_grsai_api_generate_payload(
+    prompt: str,
+    base_image: Optional[dict],
+    reference_images: List[dict],
+    aspect_ratio: str,
+    image_size: str,
+    image_model: str,
+) -> dict:
+    images: List[str] = []
+    if base_image:
+        images.append(build_image_data_url(base_image))
+    for image in reference_images:
+        images.append(build_image_data_url(image))
+
+    return {
+        "model": normalize_image_model(image_model, default="nano-banana-2"),
+        "prompt": build_prompt(prompt, len(reference_images), has_base_image=bool(base_image)),
+        "images": images,
+        "aspectRatio": aspect_ratio,
+        "imageSize": image_size,
+        "replyType": "json",
+    }
+
+
 def normalize_upload_list(value: object) -> List[dict]:
     if value is None:
         return []
@@ -1802,6 +1872,27 @@ def normalize_upload_list(value: object) -> List[dict]:
     return []
 
 
+def decode_response_image_data(value: object, default_mime_type: str = "image/png") -> Tuple[Optional[bytes], Optional[str]]:
+    if not isinstance(value, str) or not value.strip():
+        return None, None
+
+    raw = value.strip()
+    mime_type = default_mime_type
+    if raw.startswith("data:"):
+        header, separator, encoded = raw.partition(",")
+        if not separator:
+            return None, None
+        match = re.match(r"data:([^;,]+);base64", header, flags=re.IGNORECASE)
+        if match:
+            mime_type = match.group(1)
+        raw = encoded
+
+    try:
+        return base64.b64decode(re.sub(r"\s+", "", raw), validate=True), mime_type
+    except (ValueError, TypeError):
+        return None, None
+
+
 def parse_response_image(payload: dict) -> Tuple[Optional[bytes], Optional[str], Optional[str]]:
     candidates = payload.get("candidates") or []
     for candidate in candidates:
@@ -1810,10 +1901,22 @@ def parse_response_image(payload: dict) -> Tuple[Optional[bytes], Optional[str],
             inline = part.get("inlineData") or part.get("inline_data")
             if inline and inline.get("data"):
                 mime_type = inline.get("mimeType") or inline.get("mime_type") or "image/png"
-                try:
-                    return base64.b64decode(inline["data"]), mime_type, part.get("text")
-                except (ValueError, TypeError):
-                    continue
+                image_bytes, decoded_mime_type = decode_response_image_data(inline["data"], mime_type)
+                if image_bytes and decoded_mime_type:
+                    return image_bytes, decoded_mime_type, part.get("text")
+
+    for collection_key in ("results", "data"):
+        items = payload.get(collection_key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            mime_type = str(item.get("mimeType") or item.get("mime_type") or "image/png")
+            for data_key in ("b64_json", "base64", "data"):
+                image_bytes, decoded_mime_type = decode_response_image_data(item.get(data_key), mime_type)
+                if image_bytes and decoded_mime_type:
+                    return image_bytes, decoded_mime_type, str(payload.get("status") or "").strip() or None
 
     text_chunks: List[str] = []
     for candidate in candidates:
@@ -1822,6 +1925,105 @@ def parse_response_image(payload: dict) -> Tuple[Optional[bytes], Optional[str],
             if part.get("text"):
                 text_chunks.append(part["text"])
     return None, None, "\n".join(text_chunks).strip() or None
+
+
+def extract_response_image_url(payload: dict) -> Optional[str]:
+    for collection_key in ("results", "data"):
+        items = payload.get(collection_key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            image_url = (
+                item.get("url")
+                or item.get("imageUrl")
+                or item.get("image_url")
+                or item.get("output_url")
+            )
+            if isinstance(image_url, str) and image_url.strip():
+                return image_url.strip()
+
+    candidates = payload.get("candidates") or []
+    for candidate in candidates:
+        content = candidate.get("content") or {}
+        for part in content.get("parts") or []:
+            image_url = part.get("url") or part.get("imageUrl") or part.get("image_url")
+            if isinstance(image_url, str) and image_url.strip():
+                return image_url.strip()
+    return None
+
+
+def fetch_response_image_url(image_url: str, timeout: int) -> Tuple[bytes, str]:
+    request = urllib.request.Request(
+        image_url,
+        headers={"User-Agent": "banana-pro-webui/1.0"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            image_bytes = response.read()
+            content_type = response.headers.get("Content-Type", "")
+    except Exception as exc:
+        raise RuntimeError(describe_upstream_exception(exc)) from exc
+
+    if not image_bytes:
+        raise RuntimeError("图片 URL 返回了空内容。")
+
+    mime_type = content_type.split(";", 1)[0].strip().lower()
+    if not mime_type.startswith("image/"):
+        filename = Path(urlparse(image_url).path).name
+        mime_type = infer_mime_type(filename, mime_type, image_bytes)
+    if not mime_type.startswith("image/"):
+        raise RuntimeError(f"图片 URL 返回的内容类型不是图片：{content_type or 'unknown'}。")
+    return image_bytes, mime_type
+
+
+def maybe_poll_grsai_generation_result(api_url: str, api_key: str, payload: dict, timeout: int) -> dict:
+    if not is_grsai_api_generate_endpoint(api_url):
+        return payload
+    if extract_response_image_url(payload):
+        return payload
+
+    result_id = str(payload.get("id") or "").strip()
+    if not result_id:
+        return payload
+
+    result_url = build_grsai_result_url(api_url, result_id)
+    deadline = time.monotonic() + max(timeout, 5)
+    latest_payload = payload
+    while not extract_response_image_url(latest_payload):
+        status = str(latest_payload.get("status") or "").strip().lower()
+        if status in FAILED_GENERATION_STATUSES:
+            return latest_payload
+        if status in SUCCESS_GENERATION_STATUSES and latest_payload is not payload:
+            return latest_payload
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return latest_payload
+
+        time.sleep(min(2.0, max(0.2, remaining)))
+        request_timeout = max(1, min(30, int(remaining)))
+        latest_payload = get_json_from_upstream(result_url, api_key, request_timeout)
+
+    return latest_payload
+
+
+def resolve_response_image(payload: dict, timeout: int) -> Tuple[Optional[bytes], Optional[str], Optional[str]]:
+    image_bytes, mime_type, message = parse_response_image(payload)
+    if image_bytes and mime_type:
+        return image_bytes, mime_type, message
+
+    image_url = extract_response_image_url(payload)
+    if not image_url:
+        return None, None, message
+
+    downloaded_bytes, downloaded_mime_type = fetch_response_image_url(image_url, timeout)
+    status = str(payload.get("status") or "").strip()
+    result_id = str(payload.get("id") or "").strip()
+    detail_parts = [part for part in (status, result_id) if part]
+    return downloaded_bytes, downloaded_mime_type, " / ".join(detail_parts) or image_url
 
 
 def extension_for_mime(mime_type: str) -> str:
@@ -2609,22 +2811,43 @@ class AppHandler(BaseHTTPRequestHandler):
             else:
                 aspect_ratio = "1:1"
 
-        payload = build_payload(
-            prompt=prompt,
-            base_image=base_upload,
-            reference_images=ref_uploads,
-            aspect_ratio=aspect_ratio,
-            image_size=image_size,
-            enable_search=enable_search,
-        )
+        if is_grsai_api_generate_endpoint(image_platform["api_url"]):
+            payload = build_grsai_api_generate_payload(
+                prompt=prompt,
+                base_image=base_upload,
+                reference_images=ref_uploads,
+                aspect_ratio=aspect_ratio,
+                image_size=image_size,
+                image_model=image_platform["image_model"],
+            )
+        else:
+            payload = build_payload(
+                prompt=prompt,
+                base_image=base_upload,
+                reference_images=ref_uploads,
+                aspect_ratio=aspect_ratio,
+                image_size=image_size,
+                enable_search=enable_search,
+            )
 
         try:
             body = json.dumps(payload).encode("utf-8")
+            generation_timeout = TIMEOUT_MAP.get(image_size, 300)
             response_payload = post_json_to_upstream(
                 api_url=image_platform["api_url"],
                 body=body,
                 api_key=image_platform["api_key"],
-                timeout=TIMEOUT_MAP.get(image_size, 300),
+                timeout=generation_timeout,
+            )
+            response_payload = maybe_poll_grsai_generation_result(
+                image_platform["api_url"],
+                image_platform["api_key"],
+                response_payload,
+                generation_timeout,
+            )
+            image_bytes, mime_type, message = resolve_response_image(
+                response_payload,
+                timeout=min(generation_timeout, 60),
             )
         except UpstreamHttpError as exc:
             return json_response(
@@ -2645,7 +2868,6 @@ class AppHandler(BaseHTTPRequestHandler):
                 },
             )
 
-        image_bytes, mime_type, message = parse_response_image(response_payload)
         if not image_bytes or not mime_type:
             return json_response(
                 self,
@@ -2764,29 +2986,50 @@ class AppHandler(BaseHTTPRequestHandler):
             "The output must look identical to the input at a glance, only crisper and more detailed."
         )
 
-        payload = build_payload(
-            prompt=prompt,
-            base_image=tile_upload,
-            reference_images=[],
-            aspect_ratio=tile_aspect_ratio,
-            image_size=map_output_size("4K"),
-            enable_search=False,
-        )
+        tile_image_size = map_output_size("4K")
+        if is_grsai_api_generate_endpoint(image_platform["api_url"]):
+            payload = build_grsai_api_generate_payload(
+                prompt=prompt,
+                base_image=tile_upload,
+                reference_images=[],
+                aspect_ratio=tile_aspect_ratio,
+                image_size=tile_image_size,
+                image_model=image_platform["image_model"],
+            )
+        else:
+            payload = build_payload(
+                prompt=prompt,
+                base_image=tile_upload,
+                reference_images=[],
+                aspect_ratio=tile_aspect_ratio,
+                image_size=tile_image_size,
+                enable_search=False,
+            )
 
         try:
             body = json.dumps(payload).encode("utf-8")
+            generation_timeout = TIMEOUT_MAP.get(tile_image_size, 300)
             response_payload = post_json_to_upstream(
                 api_url=image_platform["api_url"],
                 body=body,
                 api_key=image_platform["api_key"],
-                timeout=TIMEOUT_MAP.get(map_output_size("4K"), 300),
+                timeout=generation_timeout,
+            )
+            response_payload = maybe_poll_grsai_generation_result(
+                image_platform["api_url"],
+                image_platform["api_key"],
+                response_payload,
+                generation_timeout,
+            )
+            image_bytes, mime_type, _ = resolve_response_image(
+                response_payload,
+                timeout=min(generation_timeout, 60),
             )
         except UpstreamHttpError as exc:
             return json_response(self, exc.status_code, {"error": "上游接口返回错误。", "details": exc.details})
         except Exception as exc:
             return json_response(self, 502, {"error": "调用扩图宫格接口失败。", "details": str(exc)})
 
-        image_bytes, mime_type, _ = parse_response_image(response_payload)
         if not image_bytes or not mime_type:
             return json_response(self, 502, {"error": "接口返回成功，但没有拿到宫格图片数据。"})
 
