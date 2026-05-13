@@ -518,6 +518,15 @@ function triggerDownloadLink(url, filename) {
   anchor.remove();
 }
 
+function buildHistoryDownloadUrl(entry) {
+  const id = String(entry?.id || "").trim();
+  return id ? `/api/history/download/${encodeURIComponent(id)}` : "";
+}
+
+function shouldUseNativeDownloadNavigation(entry) {
+  return Boolean(getPwaRuntime()?.platform?.isMobile && buildHistoryDownloadUrl(entry));
+}
+
 function triggerBackgroundDownload(url) {
   const frame = document.createElement("iframe");
   frame.style.display = "none";
@@ -569,6 +578,21 @@ async function resolveDownloadTarget(entry) {
 }
 
 async function downloadEntryImage(entry) {
+  const directUrl = buildHistoryDownloadUrl(entry);
+  if (directUrl) {
+    const filename = entry?.downloadName || "banana-pro-image";
+    const runtime = getPwaRuntime();
+    if (runtime) {
+      return runtime.deliverDownload({
+        url: directUrl,
+        filename,
+        source: "download-endpoint",
+      });
+    }
+    triggerDownloadLink(directUrl, filename);
+    return { method: "anchor" };
+  }
+
   const target = await resolveDownloadTarget(entry);
   const runtime = getPwaRuntime();
   if (!runtime) {
@@ -584,7 +608,7 @@ async function downloadEntryImage(entry) {
     filename: target.downloadName,
     source: target.source,
     title: "Banana Pro 图片已生成",
-    text: "可以保存到本地，也可以直接转发到其他应用。",
+    text: "可以直接下载到本地。",
   });
 }
 
@@ -2123,7 +2147,16 @@ function bindResultActions(stage, entry) {
     await copyPromptText(entry.prompt, "当前结果提示词");
   });
 
-  downloadButton?.addEventListener("click", async () => {
+  if (downloadButton) {
+    downloadButton.href = buildHistoryDownloadUrl(entry) || getPreferredImageUrl(entry);
+    downloadButton.download = entry.downloadName || "banana-pro-image";
+  }
+
+  downloadButton?.addEventListener("click", async (event) => {
+    if (shouldUseNativeDownloadNavigation(entry)) {
+      return;
+    }
+    event.preventDefault();
     try {
       await downloadEntryImage(entry);
     } catch (error) {
@@ -2185,7 +2218,7 @@ function renderCurrentResult(entry) {
             <button type="button" class="ghost-button" data-action="copy-prompt">复制提示词</button>
             <button type="button" class="ghost-button" data-action="close-result">关闭</button>
             <button type="button" class="danger-button" data-action="delete-result">删除</button>
-            <button type="button" class="ghost-button" data-action="download-result">${downloadLabel}</button>
+            <a class="ghost-button" data-action="download-result" download>${downloadLabel}</a>
           </div>
         </div>
       </div>
@@ -2365,10 +2398,13 @@ function buildHistoryNode(entry) {
     if (window.onMobileResultReady) window.onMobileResultReady();
   });
 
-  downloadLink.href = imageUrl;
+  downloadLink.href = buildHistoryDownloadUrl(entry) || imageUrl;
   downloadLink.download = entry.downloadName || "banana-pro-image";
   downloadLink.textContent = getDownloadActionLabel("single");
   downloadLink.addEventListener("click", async (event) => {
+    if (shouldUseNativeDownloadNavigation(entry)) {
+      return;
+    }
     event.preventDefault();
     try {
       await downloadEntryImage(entry);

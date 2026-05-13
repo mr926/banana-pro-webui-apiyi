@@ -14,18 +14,6 @@
       window.matchMedia?.("(display-mode: standalone)")?.matches ||
       window.navigator.standalone === true;
 
-    let canShareFiles = false;
-    try {
-      canShareFiles =
-        typeof navigator.canShare === "function" &&
-        typeof File !== "undefined" &&
-        navigator.canShare({
-          files: [new File(["banana"], "banana.txt", { type: "text/plain" })],
-        });
-    } catch (error) {
-      canShareFiles = false;
-    }
-
     return {
       isAndroid,
       isIOS,
@@ -34,20 +22,10 @@
       isStandalone,
       supportsNotifications: typeof window.Notification !== "undefined",
       supportsVibration: typeof navigator.vibrate === "function",
-      supportsShare: typeof navigator.share === "function",
-      supportsShareFiles: canShareFiles,
     };
   }
 
   const platform = getPlatformInfo();
-
-  function sameOrigin(url) {
-    try {
-      return new URL(url, window.location.href).origin === window.location.origin;
-    } catch (error) {
-      return false;
-    }
-  }
 
   function triggerAnchorDownload(url, filename) {
     const link = document.createElement("a");
@@ -73,60 +51,6 @@
     const objectUrl = URL.createObjectURL(blob);
     triggerAnchorDownload(objectUrl, filename);
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
-  }
-
-  async function blobToFile(blob, filename) {
-    return new File([blob], filename || "banana-pro-image", {
-      type: blob.type || "application/octet-stream",
-      lastModified: Date.now(),
-    });
-  }
-
-  async function fetchBlob(url) {
-    const response = await fetch(url, {
-      credentials: sameOrigin(url) ? "include" : "omit",
-    });
-    if (!response.ok) {
-      throw new Error("下载内容读取失败，请稍后重试。");
-    }
-    return response.blob();
-  }
-
-  async function shareFileOrUrl(url, filename, title, text) {
-    if (platform.supportsShareFiles) {
-      try {
-        const blob = await fetchBlob(url);
-        const file = await blobToFile(blob, filename);
-        if (navigator.canShare({ files: [file] })) {
-          await navigator.share({
-            title,
-            text,
-            files: [file],
-          });
-          return { method: "share-file" };
-        }
-      } catch (error) {
-        // Fall through to URL share/open fallback.
-      }
-    }
-
-    if (platform.supportsShare) {
-      try {
-        await navigator.share({
-          title,
-          text,
-          url,
-        });
-        return { method: "share-url" };
-      } catch (error) {
-        if (error?.name === "AbortError") {
-          return { method: "cancelled" };
-        }
-      }
-    }
-
-    window.open(url, "_blank", "noopener,noreferrer");
-    return { method: "open-tab" };
   }
 
   function parseFilenameFromDisposition(disposition, fallback = "banana-pro-download") {
@@ -172,21 +96,21 @@
 
   function getDownloadActionLabel(kind = "single") {
     if (kind === "batch") {
-      return platform.isMobile ? "打包保存" : "批量下载";
+      return "批量下载";
     }
-    return platform.isMobile ? "保存 / 分享" : "直接下载";
+    return "直接下载";
   }
 
   function getPlatformDescription() {
     if (platform.isIOS) {
       return platform.isStandalone
-        ? "iPhone / iPad 已处于 Web App 模式，适合拍照上传、分享保存和完成提醒。"
-        : "iPhone / iPad 推荐用 Safari 安装到主屏幕，上传、保存和提醒会更稳定。";
+        ? "iPhone / iPad 已处于 Web App 模式，适合拍照上传、直接下载和完成提醒。"
+        : "iPhone / iPad 推荐用 Safari 安装到主屏幕，上传、下载和提醒会更稳定。";
     }
     if (platform.isAndroid) {
       return platform.isStandalone
-        ? "Android 已处于 Web App 模式，支持相机上传、系统分享和完成通知。"
-        : "Android 可直接安装到主屏幕，拍照上传和系统保存会更接近应用体验。";
+        ? "Android 已处于 Web App 模式，支持相机上传、直接下载和完成通知。"
+        : "Android 可直接安装到主屏幕，拍照上传和浏览器下载会更接近应用体验。";
     }
     return "桌面浏览器保留拖拽上传、直接下载和标签标题提醒，适合高频批量操作。";
   }
@@ -320,12 +244,8 @@
     }
   }
 
-  async function deliverDownload({ url, filename, source = "local", title = "Banana Pro", text = "图片已生成完成。" }) {
-    if (platform.isMobile) {
-      return shareFileOrUrl(url, filename, title, text);
-    }
-
-    if (source === "oss-signed") {
+  async function deliverDownload({ url, filename, source = "local" }) {
+    if (source === "oss-signed" && !platform.isMobile) {
       triggerHiddenIframe(url);
       return { method: "iframe" };
     }
@@ -334,25 +254,7 @@
     return { method: "anchor" };
   }
 
-  async function deliverBlobDownload({ blob, filename, title = "Banana Pro", text = "文件已准备完成。" }) {
-    if (platform.isMobile && platform.supportsShareFiles) {
-      try {
-        const file = await blobToFile(blob, filename);
-        if (navigator.canShare({ files: [file] })) {
-          await navigator.share({
-            title,
-            text,
-            files: [file],
-          });
-          return { method: "share-file" };
-        }
-      } catch (error) {
-        if (error?.name === "AbortError") {
-          return { method: "cancelled" };
-        }
-      }
-    }
-
+  async function deliverBlobDownload({ blob, filename }) {
     saveBlob(blob, filename);
     return { method: "blob-download" };
   }

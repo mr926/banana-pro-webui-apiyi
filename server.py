@@ -967,6 +967,63 @@ def get_local_thumb_cache_path(entry: dict) -> Optional[Path]:
     return get_thumbnail_path(item_id) if item_id else None
 
 
+def normalize_history_download_ids(raw_ids: object) -> List[str]:
+    if not isinstance(raw_ids, list):
+        return []
+
+    selected_ids: List[str] = []
+    for item in raw_ids:
+        item_id = str(item).strip()
+        if item_id and item_id not in selected_ids:
+            selected_ids.append(item_id)
+    return selected_ids
+
+
+def parse_history_download_ids_query(query_string: str) -> List[str]:
+    raw_ids: List[str] = []
+    for key, value in parse_qsl(query_string, keep_blank_values=False):
+        if key not in {"id", "ids"}:
+            continue
+        raw_ids.extend(part.strip() for part in value.split(",") if part.strip())
+    return normalize_history_download_ids(raw_ids)
+
+
+def get_history_entries_for_download(raw_ids: object) -> Tuple[List[str], List[dict]]:
+    selected_ids = normalize_history_download_ids(raw_ids)
+    if not selected_ids:
+        return [], []
+
+    history_map = {
+        str(entry.get("id")): entry
+        for entry in read_history()
+        if isinstance(entry, dict) and entry.get("id")
+    }
+    selected_entries = [history_map[item_id] for item_id in selected_ids if item_id in history_map]
+    return selected_ids, selected_entries
+
+
+def get_history_download_name(entry: dict) -> str:
+    return str(entry.get("downloadName", "")).strip() or "banana-pro-image"
+
+
+def build_history_signed_download_url(entry: dict, download_name: str) -> Optional[str]:
+    try:
+        oss_config = get_oss_config()
+    except RuntimeError:
+        return None
+
+    object_key = str(entry.get("ossImageKey", "")).strip()
+    if not object_key:
+        object_key = infer_oss_object_key_from_url(str(entry.get("ossImageUrl", "")))
+    if not object_key:
+        return None
+
+    try:
+        return build_oss_signed_download_url(oss_config, object_key, download_name)
+    except Exception:
+        return None
+
+
 def remove_local_cache_files(paths: List[Optional[Path]]) -> None:
     for path in paths:
         if path is None:
@@ -1542,6 +1599,12 @@ def make_session_token(password: str) -> str:
 
 def safe_name(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]+", "-", name).strip("-") or "image"
+
+
+def attachment_content_disposition(filename: str) -> str:
+    safe_filename = safe_name(filename or "banana-pro-download")
+    encoded_filename = quote(safe_filename)
+    return f"attachment; filename=\"{safe_filename}\"; filename*=UTF-8''{encoded_filename}"
 
 
 def infer_mime_type(filename: str, provided: Optional[str], data: bytes) -> str:
@@ -2473,6 +2536,19 @@ class AppHandler(BaseHTTPRequestHandler):
                 return json_response(self, 404, {"error": "未找到对应的技能。"})
             return json_response(self, 200, skill)
 
+        if parsed.path == "/api/history/download-zip":
+            if not self.ensure_authenticated():
+                return
+            return self.handle_download_history_zip_ids(parse_history_download_ids_query(parsed.query))
+
+        if parsed.path.startswith("/api/history/download/"):
+            if not self.ensure_authenticated():
+                return
+            item_id = unquote(parsed.path.removeprefix("/api/history/download/")).strip()
+            if not item_id:
+                return json_response(self, 400, {"error": "缺少要下载的记录 id。"})
+            return self.handle_download_history_file(item_id)
+
         if parsed.path == "/api/history":
             if not self.ensure_authenticated():
                 return
@@ -2657,7 +2733,12 @@ class AppHandler(BaseHTTPRequestHandler):
 
         json_response(self, 404, {"error": "Not found"})
 
-    def serve_file(self, target: Path, headers_only: bool = False) -> None:
+    def serve_file(
+        self,
+        target: Path,
+        headers_only: bool = False,
+        extra_headers: Optional[List[Tuple[str, str]]] = None,
+    ) -> None:
         if not target.exists() or not target.is_file():
             return json_response(self, 404, {"error": "File not found"})
 
@@ -2667,6 +2748,8 @@ class AppHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", mime_type)
         self.send_header("Content-Length", str(len(content)))
+        for key, value in extra_headers or []:
+            self.send_header(key, value)
         self.end_headers()
         if not headers_only:
             self.wfile.write(content)
@@ -3420,25 +3503,15 @@ class AppHandler(BaseHTTPRequestHandler):
         except Exception:
             return json_response(self, 400, {"error": "请求格式不正确。"})
 
-        raw_ids = payload.get("ids")
+        return self.handle_download_history_zip_ids(payload.get("ids"))
+
+    def handle_download_history_zip_ids(self, raw_ids: object) -> None:
         if not isinstance(raw_ids, list):
             return json_response(self, 400, {"error": "缺少要下载的图片 id 列表。"})
 
-        selected_ids: List[str] = []
-        for item in raw_ids:
-            item_id = str(item).strip()
-            if item_id and item_id not in selected_ids:
-                selected_ids.append(item_id)
-
+        selected_ids, selected_entries = get_history_entries_for_download(raw_ids)
         if not selected_ids:
             return json_response(self, 400, {"error": "请至少选择一张图片。"})
-
-        history_map = {
-            str(entry.get("id")): entry
-            for entry in read_history()
-            if isinstance(entry, dict) and entry.get("id")
-        }
-        selected_entries = [history_map[item_id] for item_id in selected_ids if item_id in history_map]
         if not selected_entries:
             return json_response(self, 404, {"error": "未找到所选历史记录。"})
 
@@ -3494,55 +3567,60 @@ class AppHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def handle_download_history_file(self, item_id: str) -> None:
+        entry = get_history_entry(item_id)
+        if entry is None:
+            return json_response(self, 404, {"error": "未找到对应的历史记录。"})
+
+        download_name = get_history_download_name(entry)
+        signed_oss_url = build_history_signed_download_url(entry, download_name)
+        if signed_oss_url:
+            self.send_response(302)
+            self.send_header("Location", signed_oss_url)
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
+
+        target = get_local_image_cache_path(entry)
+        if target is None or not target.exists() or not target.is_file():
+            fallback_url = str(entry.get("imageUrl", "")).strip()
+            if fallback_url and not fallback_url.startswith("/generated/"):
+                self.send_response(302)
+                self.send_header("Location", fallback_url)
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                return
+            return json_response(self, 404, {"error": "图片文件不存在或无法读取。"})
+
+        return self.serve_file(
+            target,
+            extra_headers=[
+                ("Content-Disposition", attachment_content_disposition(download_name)),
+                ("Cache-Control", "no-store"),
+            ],
+        )
+
     def handle_download_history_links(self) -> None:
         try:
             payload = self.read_json_body()
         except Exception:
             return json_response(self, 400, {"error": "请求格式不正确。"})
 
-        raw_ids = payload.get("ids")
-        if not isinstance(raw_ids, list):
+        if not isinstance(payload.get("ids"), list):
             return json_response(self, 400, {"error": "缺少要下载的图片 id 列表。"})
 
-        selected_ids: List[str] = []
-        for item in raw_ids:
-            item_id = str(item).strip()
-            if item_id and item_id not in selected_ids:
-                selected_ids.append(item_id)
-
+        selected_ids, selected_entries = get_history_entries_for_download(payload.get("ids"))
         if not selected_ids:
             return json_response(self, 400, {"error": "请至少选择一张图片。"})
-
-        history_map = {
-            str(entry.get("id")): entry
-            for entry in read_history()
-            if isinstance(entry, dict) and entry.get("id")
-        }
-        selected_entries = [history_map[item_id] for item_id in selected_ids if item_id in history_map]
         if not selected_entries:
             return json_response(self, 404, {"error": "未找到所选历史记录。"})
-
-        try:
-            oss_config = get_oss_config()
-        except RuntimeError:
-            oss_config = None
 
         items: List[dict] = []
         skipped = 0
         for entry in selected_entries:
             item_id = str(entry.get("id", "")).strip()
-            download_name = str(entry.get("downloadName", "")).strip() or "banana-pro-image"
-
-            signed_oss_url: Optional[str] = None
-            if oss_config:
-                object_key = str(entry.get("ossImageKey", "")).strip()
-                if not object_key:
-                    object_key = infer_oss_object_key_from_url(str(entry.get("ossImageUrl", "")))
-                if object_key:
-                    try:
-                        signed_oss_url = build_oss_signed_download_url(oss_config, object_key, download_name)
-                    except Exception:
-                        signed_oss_url = None
+            download_name = get_history_download_name(entry)
+            signed_oss_url = build_history_signed_download_url(entry, download_name)
 
             if signed_oss_url:
                 items.append(

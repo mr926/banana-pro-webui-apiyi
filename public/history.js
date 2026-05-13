@@ -300,6 +300,23 @@ function buildDirectDownloadUrl(imageUrl, filename) {
   return trimmedUrl;
 }
 
+function buildHistoryDownloadUrl(entry) {
+  const id = String(entry?.id || "").trim();
+  return id ? `/api/history/download/${encodeURIComponent(id)}` : "";
+}
+
+function buildBatchDownloadUrl(ids) {
+  const params = new URLSearchParams();
+  ids.forEach((id) => {
+    params.append("id", id);
+  });
+  return `/api/history/download-zip?${params.toString()}`;
+}
+
+function shouldUseNativeDownloadNavigation(entry) {
+  return Boolean(getPwaRuntime()?.platform?.isMobile && buildHistoryDownloadUrl(entry));
+}
+
 function triggerBrowserDownload(url, filename) {
   const link = document.createElement("a");
   link.href = url;
@@ -367,6 +384,21 @@ async function resolveDownloadTarget(entry) {
 }
 
 async function downloadEntryImage(entry) {
+  const directUrl = buildHistoryDownloadUrl(entry);
+  if (directUrl) {
+    const filename = entry?.downloadName || "banana-pro-image";
+    const runtime = getPwaRuntime();
+    if (runtime) {
+      return runtime.deliverDownload({
+        url: directUrl,
+        filename,
+        source: "download-endpoint",
+      });
+    }
+    triggerBrowserDownload(directUrl, filename);
+    return { method: "anchor" };
+  }
+
   const target = await resolveDownloadTarget(entry);
   const runtime = getPwaRuntime();
   const downloadUrl = buildDirectDownloadUrl(target.url, target.downloadName);
@@ -383,7 +415,7 @@ async function downloadEntryImage(entry) {
     filename: target.downloadName,
     source: target.source,
     title: "Banana Pro 历史图片",
-    text: "可以保存到本地，也可以直接转发到其他应用。",
+    text: "可以直接下载到本地。",
   });
 }
 
@@ -486,19 +518,10 @@ async function downloadSelectedInBatch() {
   try {
     const runtime = getPwaRuntime();
     if (runtime?.platform?.isMobile) {
-      const archive = await runtime.requestArchive(
-        "/api/history/download-zip",
-        { ids },
-        `banana-pro-history-${new Date().toISOString().slice(0, 10)}.zip`,
-      );
-      const result = await runtime.deliverBlobDownload({
-        blob: archive.blob,
-        filename: archive.filename,
-        title: "Banana Pro 历史相册",
-        text: "历史图片压缩包已准备完成。",
-      });
-      if (result?.method !== "cancelled") {
-        alert("已准备打包文件，你可以直接保存或分享。");
+      const filename = `banana-pro-history-${new Date().toISOString().slice(0, 10)}.zip`;
+      triggerBrowserDownload(buildBatchDownloadUrl(ids), filename);
+      if (albumSelectionStatus) {
+        albumSelectionStatus.textContent = "已触发批量下载，请在浏览器下载管理中查看。";
       }
       return;
     }
@@ -629,10 +652,13 @@ function renderAlbum(items) {
       openLink.textContent = "查看";
       openLink.classList.remove("is-disabled");
     }
-    downloadLink.href = imageUrl;
+    downloadLink.href = buildHistoryDownloadUrl(entry) || imageUrl;
     downloadLink.download = entry.downloadName || "banana-pro-image";
     downloadLink.textContent = getDownloadActionLabel("single");
     downloadLink.addEventListener("click", async (event) => {
+      if (shouldUseNativeDownloadNavigation(entry)) {
+        return;
+      }
       event.preventDefault();
       try {
         await downloadEntryImage(entry);
