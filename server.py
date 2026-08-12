@@ -312,18 +312,36 @@ def read_image_platforms() -> List[dict]:
 
         api_url = get_xml_child_text(node, "url", get_setting("BANANA_PRO_API_URL", DEFAULT_API_URL))
         api_key = get_xml_child_text(node, "key", "")
-        models_node = node.find("models")
-        model_separator = (
-            (models_node.get("separator", "") if models_node is not None else "")
-            or node.get("modelSeparator", "")
-            or DEFAULT_MODEL_SEPARATOR
-        )
-        raw_models = get_xml_child_text(node, "models", get_setting("BANANA_PRO_IMAGE_MODEL", DEFAULT_IMAGE_MODEL))
-        models = split_image_models(raw_models, model_separator)
+        models: List[str] = []
+        model_protocols: Dict[str, str] = {}
+        seen_models = set()
+        models_nodes = node.findall("models")
+        for models_node in models_nodes:
+            model_separator = (
+                models_node.get("separator", "")
+                or node.get("modelSeparator", "")
+                or DEFAULT_MODEL_SEPARATOR
+            )
+            node_models = split_image_models(models_node.text or "", model_separator)
+            node_protocol = normalize_image_protocol(
+                models_node.get("protocol", ""),
+                api_url,
+                node_models,
+            )
+            for model in node_models:
+                if model in model_protocols and model_protocols[model] != node_protocol:
+                    raise ImagePlatformConfigError(
+                        f"API 平台「{raw_name}」中的模型 `{model}` 被配置了多个不同协议。",
+                        status_code=500,
+                    )
+                model_protocols[model] = node_protocol
+                if model not in seen_models:
+                    seen_models.add(model)
+                    models.append(model)
+
         if not models:
             models = [DEFAULT_IMAGE_MODEL]
-        raw_protocol = models_node.get("protocol", "") if models_node is not None else ""
-        protocol = normalize_image_protocol(raw_protocol, api_url, models)
+            model_protocols[DEFAULT_IMAGE_MODEL] = infer_image_protocol(api_url, models)
 
         requested_default_model = (node.get("defaultModel") or "").strip()
         default_model = requested_default_model if requested_default_model in models else models[0]
@@ -337,7 +355,7 @@ def read_image_platforms() -> List[dict]:
                 "api_key": api_key.strip(),
                 "models": models,
                 "default_model": default_model,
-                "protocol": protocol,
+                "model_protocols": model_protocols,
                 "is_default": is_default,
             }
         )
@@ -405,17 +423,21 @@ def resolve_image_generation_platform(platform_id: str = "", image_model: str = 
             status_code=500,
         )
 
+    selected_protocol = selected_platform["model_protocols"].get(selected_model)
+    if not selected_protocol:
+        selected_protocol = infer_image_protocol(selected_platform["api_url"], [selected_model])
+
     return {
         "platform_id": selected_platform["id"],
         "platform_name": selected_platform["name"],
         "api_key": api_key,
         "api_url": (
             selected_platform["api_url"]
-            if selected_platform["protocol"] == PROTOCOL_OPENAI_IMAGES
+            if selected_protocol == PROTOCOL_OPENAI_IMAGES
             else resolve_image_generation_api_url(selected_platform["api_url"], selected_model)
         ),
         "image_model": selected_model,
-        "protocol": selected_platform["protocol"],
+        "protocol": selected_protocol,
     }
 
 

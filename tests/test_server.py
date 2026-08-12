@@ -1,12 +1,40 @@
 import base64
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import server
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_multiple_models_nodes_are_merged_with_per_model_protocols(self):
+        xml = """<?xml version="1.0" encoding="utf-8"?>
+<apiPlatforms version="1">
+  <platform id="mixed" name="Mixed" default="true" defaultModel="nano-banana-2">
+    <url>https://proxy.example/v1</url>
+    <key>test-key</key>
+    <models separator="|" protocol="gemini-generate-content">nano-banana-pro|nano-banana-2</models>
+    <models separator="|" protocol="openai-images">gpt-image-2-vip</models>
+  </platform>
+</apiPlatforms>
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "api-platforms.xml"
+            config_path.write_text(xml, encoding="utf-8")
+            with mock.patch.object(server, "API_PLATFORMS_FILE", config_path):
+                platforms = server.read_image_platforms()
+                response = server.build_image_platforms_response(platforms)
+                selected = server.resolve_image_generation_platform("mixed", "gpt-image-2-vip")
+
+        self.assertEqual(
+            response["items"][0]["models"],
+            ["nano-banana-pro", "nano-banana-2", "gpt-image-2-vip"],
+        )
+        self.assertEqual(selected["protocol"], server.PROTOCOL_OPENAI_IMAGES)
+        self.assertEqual(selected["api_url"], "https://proxy.example/v1")
+
     def test_protocol_alias_and_legacy_inference(self):
         self.assertEqual(
             server.normalize_image_protocol(

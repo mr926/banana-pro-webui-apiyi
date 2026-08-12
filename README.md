@@ -105,6 +105,19 @@ Grsai 使用 `/v1/api/generate` 时，请求体会按 Grsai 文档发送 `model 
 - `grsai-generate`：Grsai `/v1/api/generate` 协议
 - `openai-images`：OpenAI Images API 兼容协议
 
+同一个平台可以配置多个 `<models>` 节点。页面会合并展示其中的模型，服务端会按当前所选模型使用对应协议：
+
+```xml
+<platform id="mixed-provider" name="Mixed Provider">
+  <url>https://example.com/v1</url>
+  <key>your-api-key</key>
+  <models separator="|" protocol="gemini-generate-content">nano-banana-pro|nano-banana-2</models>
+  <models separator="|" protocol="openai-images">gpt-image-2-vip</models>
+</platform>
+```
+
+这种写法要求平台的 `url` 是两种协议共用的基础地址；如果两类模型需要不同 URL，请拆成两个 `<platform>`。
+
 GPT Image 2 平台示例：
 
 ```xml
