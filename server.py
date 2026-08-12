@@ -71,6 +71,21 @@ NANO_BANANA_COMPAT_MODEL = "gemini-2.5-flash-image"
 DEFAULT_IMAGE_PLATFORM_ID = "default"
 DEFAULT_IMAGE_PLATFORM_NAME = "默认平台"
 DEFAULT_MODEL_SEPARATOR = "|"
+PROTOCOL_GEMINI_GENERATE_CONTENT = "gemini-generate-content"
+PROTOCOL_GRSAI_GENERATE = "grsai-generate"
+PROTOCOL_OPENAI_IMAGES = "openai-images"
+IMAGE_PROTOCOL_ALIASES = {
+    "gemini": PROTOCOL_GEMINI_GENERATE_CONTENT,
+    "gemini-generate-content": PROTOCOL_GEMINI_GENERATE_CONTENT,
+    "nano-banana": PROTOCOL_GEMINI_GENERATE_CONTENT,
+    "nanobanana": PROTOCOL_GEMINI_GENERATE_CONTENT,
+    "nanobananapro": PROTOCOL_GEMINI_GENERATE_CONTENT,
+    "grsai": PROTOCOL_GRSAI_GENERATE,
+    "grsai-generate": PROTOCOL_GRSAI_GENERATE,
+    "gpt-image": PROTOCOL_OPENAI_IMAGES,
+    "openai": PROTOCOL_OPENAI_IMAGES,
+    "openai-images": PROTOCOL_OPENAI_IMAGES,
+}
 DEFAULT_PORT = 8787
 TIMEOUT_MAP = {"1K": 180, "2K": 300, "4K": 360}
 PROMPT_OPTIMIZER_TIMEOUT = 90
@@ -206,6 +221,34 @@ def split_image_models(raw_models: str, separator: str = "") -> List[str]:
     return result
 
 
+def infer_image_protocol(api_url: str, models: List[str]) -> str:
+    parsed = urlparse(str(api_url or "").strip())
+    path = parsed.path.rstrip("/").lower()
+    if path == "/v1/api/generate":
+        return PROTOCOL_GRSAI_GENERATE
+    if path.endswith(":generatecontent"):
+        return PROTOCOL_GEMINI_GENERATE_CONTENT
+    if path.endswith("/images/generations") or path.endswith("/images/edits"):
+        return PROTOCOL_OPENAI_IMAGES
+    if any(str(model).strip().lower().startswith("gpt-image-") for model in models):
+        return PROTOCOL_OPENAI_IMAGES
+    return PROTOCOL_GEMINI_GENERATE_CONTENT
+
+
+def normalize_image_protocol(raw_protocol: str, api_url: str, models: List[str]) -> str:
+    normalized = str(raw_protocol or "").strip().lower().replace("_", "-")
+    if not normalized:
+        return infer_image_protocol(api_url, models)
+    protocol = IMAGE_PROTOCOL_ALIASES.get(normalized)
+    if protocol:
+        return protocol
+    supported = ", ".join(sorted(set(IMAGE_PROTOCOL_ALIASES.values())))
+    raise ImagePlatformConfigError(
+        f"不支持的图片协议 `{raw_protocol}`，可用值为：{supported}。",
+        status_code=500,
+    )
+
+
 def build_default_api_platforms_xml() -> str:
     root = ET.Element("apiPlatforms")
     root.set("version", "1")
@@ -279,6 +322,8 @@ def read_image_platforms() -> List[dict]:
         models = split_image_models(raw_models, model_separator)
         if not models:
             models = [DEFAULT_IMAGE_MODEL]
+        raw_protocol = models_node.get("protocol", "") if models_node is not None else ""
+        protocol = normalize_image_protocol(raw_protocol, api_url, models)
 
         requested_default_model = (node.get("defaultModel") or "").strip()
         default_model = requested_default_model if requested_default_model in models else models[0]
@@ -292,6 +337,7 @@ def read_image_platforms() -> List[dict]:
                 "api_key": api_key.strip(),
                 "models": models,
                 "default_model": default_model,
+                "protocol": protocol,
                 "is_default": is_default,
             }
         )
@@ -363,8 +409,13 @@ def resolve_image_generation_platform(platform_id: str = "", image_model: str = 
         "platform_id": selected_platform["id"],
         "platform_name": selected_platform["name"],
         "api_key": api_key,
-        "api_url": resolve_image_generation_api_url(selected_platform["api_url"], selected_model),
+        "api_url": (
+            selected_platform["api_url"]
+            if selected_platform["protocol"] == PROTOCOL_OPENAI_IMAGES
+            else resolve_image_generation_api_url(selected_platform["api_url"], selected_model)
+        ),
         "image_model": selected_model,
+        "protocol": selected_platform["protocol"],
     }
 
 
@@ -389,9 +440,14 @@ def with_query_param(url: str, key: str, value: str) -> str:
     return urlunparse(parsed._replace(query=urlencode(pairs)))
 
 
-def build_authenticated_request(api_url: str, body: bytes, api_key: str) -> urllib.request.Request:
+def build_authenticated_request(
+    api_url: str,
+    body: bytes,
+    api_key: str,
+    content_type: str = "application/json",
+) -> urllib.request.Request:
     request_url = str(api_url or "").strip()
-    headers = {"Content-Type": "application/json"}
+    headers = {"Content-Type": content_type}
 
     # Google Generative Language REST expects API key auth (query/header), not Bearer tokens.
     if is_google_generative_endpoint(request_url):
@@ -460,10 +516,16 @@ def describe_upstream_exception(exc: Exception) -> str:
     return exc.__class__.__name__
 
 
-def post_json_to_upstream(api_url: str, body: bytes, api_key: str, timeout: int) -> dict:
+def post_bytes_to_upstream(
+    api_url: str,
+    body: bytes,
+    api_key: str,
+    timeout: int,
+    content_type: str,
+) -> dict:
     attempts = max(1, UPSTREAM_MAX_ATTEMPTS)
     for attempt in range(1, attempts + 1):
-        request = build_authenticated_request(api_url, body, api_key)
+        request = build_authenticated_request(api_url, body, api_key, content_type=content_type)
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
@@ -478,6 +540,16 @@ def post_json_to_upstream(api_url: str, body: bytes, api_key: str, timeout: int)
                 time.sleep(min(0.8 * attempt, 1.6))
                 continue
             raise RuntimeError(describe_upstream_exception(exc)) from exc
+
+
+def post_json_to_upstream(api_url: str, body: bytes, api_key: str, timeout: int) -> dict:
+    return post_bytes_to_upstream(
+        api_url=api_url,
+        body=body,
+        api_key=api_key,
+        timeout=timeout,
+        content_type="application/json",
+    )
 
 
 def get_json_from_upstream(api_url: str, api_key: str, timeout: int) -> dict:
@@ -1925,6 +1997,142 @@ def build_grsai_api_generate_payload(
     }
 
 
+def map_openai_image_size(aspect_ratio: str, image_size: str) -> str:
+    sizes = {
+        "1K": {
+            "1:1": "1024x1024",
+            "4:3": "1152x864",
+            "3:4": "864x1152",
+            "16:9": "1536x864",
+            "9:16": "864x1536",
+            "5:4": "1120x896",
+            "4:5": "896x1120",
+        },
+        "2K": {
+            "1:1": "2048x2048",
+            "4:3": "2048x1536",
+            "3:4": "1536x2048",
+            "16:9": "2048x1152",
+            "9:16": "1152x2048",
+            "5:4": "1920x1536",
+            "4:5": "1536x1920",
+        },
+        "4K": {
+            "1:1": "2880x2880",
+            "4:3": "3264x2448",
+            "3:4": "2448x3264",
+            "16:9": "3840x2160",
+            "9:16": "2160x3840",
+            "5:4": "3200x2560",
+            "4:5": "2560x3200",
+        },
+    }
+    normalized_size = map_output_size(image_size)
+    return sizes[normalized_size].get(str(aspect_ratio or "").strip(), "auto")
+
+
+def resolve_openai_images_endpoint(api_url: str, has_input_images: bool) -> str:
+    parsed = urlparse(str(api_url or "").strip())
+    endpoint_name = "edits" if has_input_images else "generations"
+    path = parsed.path.rstrip("/")
+    if re.search(r"/images/(?:generations|edits)$", path, flags=re.IGNORECASE):
+        path = re.sub(
+            r"/images/(?:generations|edits)$",
+            f"/images/{endpoint_name}",
+            path,
+            flags=re.IGNORECASE,
+        )
+    elif path.endswith("/images"):
+        path = f"{path}/{endpoint_name}"
+    elif path:
+        path = f"{path}/images/{endpoint_name}"
+    else:
+        path = f"/v1/images/{endpoint_name}"
+    return urlunparse(parsed._replace(path=path, params="", fragment=""))
+
+
+def escape_multipart_header_value(value: str) -> str:
+    return str(value or "").replace("\\", "_").replace('"', "_").replace("\r", "_").replace("\n", "_")
+
+
+def build_multipart_body(fields: List[Tuple[str, str]], files: List[Tuple[str, dict]]) -> Tuple[bytes, str]:
+    boundary = f"----BananaPro{uuid.uuid4().hex}"
+    chunks: List[bytes] = []
+
+    def append_line(value: str = "") -> None:
+        chunks.append(value.encode("utf-8"))
+        chunks.append(b"\r\n")
+
+    for name, value in fields:
+        append_line(f"--{boundary}")
+        append_line(f'Content-Disposition: form-data; name="{escape_multipart_header_value(name)}"')
+        append_line()
+        append_line(str(value))
+
+    for name, upload in files:
+        filename = escape_multipart_header_value(str(upload.get("filename") or "input.png"))
+        mime_type = str(upload.get("mime_type") or "application/octet-stream").strip()
+        raw = upload.get("data")
+        if not isinstance(raw, bytes):
+            raw = base64.b64decode(str(upload.get("base64") or ""))
+        append_line(f"--{boundary}")
+        append_line(
+            f'Content-Disposition: form-data; name="{escape_multipart_header_value(name)}"; filename="{filename}"'
+        )
+        append_line(f"Content-Type: {mime_type}")
+        append_line()
+        chunks.append(raw)
+        chunks.append(b"\r\n")
+
+    append_line(f"--{boundary}--")
+    return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
+
+
+def post_openai_images_request(
+    image_platform: dict,
+    prompt: str,
+    base_image: Optional[dict],
+    reference_images: List[dict],
+    aspect_ratio: str,
+    image_size: str,
+    timeout: int,
+) -> dict:
+    input_images = ([base_image] if base_image else []) + reference_images
+    endpoint = resolve_openai_images_endpoint(image_platform["api_url"], bool(input_images))
+    request_prompt = build_prompt(prompt, len(reference_images), has_base_image=bool(base_image))
+    size = map_openai_image_size(aspect_ratio, image_size)
+
+    if input_images:
+        fields = [
+            ("model", image_platform["image_model"]),
+            ("prompt", request_prompt),
+            ("size", size),
+            ("output_format", "png"),
+        ]
+        files = [("image[]", image) for image in input_images]
+        body, content_type = build_multipart_body(fields, files)
+        return post_bytes_to_upstream(
+            api_url=endpoint,
+            body=body,
+            api_key=image_platform["api_key"],
+            timeout=timeout,
+            content_type=content_type,
+        )
+
+    payload = {
+        "model": image_platform["image_model"],
+        "prompt": request_prompt,
+        "size": size,
+        "output_format": "png",
+    }
+    return post_json_to_upstream(
+        api_url=endpoint,
+        body=json.dumps(payload).encode("utf-8"),
+        api_key=image_platform["api_key"],
+        timeout=timeout,
+    )
+
+
 def normalize_upload_list(value: object) -> List[dict]:
     if value is None:
         return []
@@ -2071,6 +2279,66 @@ def maybe_poll_grsai_generation_result(api_url: str, api_key: str, payload: dict
         latest_payload = get_json_from_upstream(result_url, api_key, request_timeout)
 
     return latest_payload
+
+
+def request_image_generation(
+    image_platform: dict,
+    prompt: str,
+    base_image: Optional[dict],
+    reference_images: List[dict],
+    aspect_ratio: str,
+    image_size: str,
+    enable_search: bool,
+    timeout: int,
+) -> dict:
+    protocol = image_platform.get("protocol") or PROTOCOL_GEMINI_GENERATE_CONTENT
+
+    if protocol == PROTOCOL_OPENAI_IMAGES:
+        return post_openai_images_request(
+            image_platform=image_platform,
+            prompt=prompt,
+            base_image=base_image,
+            reference_images=reference_images,
+            aspect_ratio=aspect_ratio,
+            image_size=image_size,
+            timeout=timeout,
+        )
+
+    if protocol == PROTOCOL_GRSAI_GENERATE:
+        payload = build_grsai_api_generate_payload(
+            prompt=prompt,
+            base_image=base_image,
+            reference_images=reference_images,
+            aspect_ratio=aspect_ratio,
+            image_size=image_size,
+            image_model=image_platform["image_model"],
+        )
+    elif protocol == PROTOCOL_GEMINI_GENERATE_CONTENT:
+        payload = build_payload(
+            prompt=prompt,
+            base_image=base_image,
+            reference_images=reference_images,
+            aspect_ratio=aspect_ratio,
+            image_size=image_size,
+            enable_search=enable_search,
+        )
+    else:
+        raise ImagePlatformConfigError(f"不支持的图片协议 `{protocol}`。", status_code=500)
+
+    response_payload = post_json_to_upstream(
+        api_url=image_platform["api_url"],
+        body=json.dumps(payload).encode("utf-8"),
+        api_key=image_platform["api_key"],
+        timeout=timeout,
+    )
+    if protocol == PROTOCOL_GRSAI_GENERATE:
+        response_payload = maybe_poll_grsai_generation_result(
+            image_platform["api_url"],
+            image_platform["api_key"],
+            response_payload,
+            timeout,
+        )
+    return response_payload
 
 
 def resolve_response_image(payload: dict, timeout: int) -> Tuple[Optional[bytes], Optional[str], Optional[str]]:
@@ -2894,39 +3162,17 @@ class AppHandler(BaseHTTPRequestHandler):
             else:
                 aspect_ratio = "1:1"
 
-        if is_grsai_api_generate_endpoint(image_platform["api_url"]):
-            payload = build_grsai_api_generate_payload(
-                prompt=prompt,
-                base_image=base_upload,
-                reference_images=ref_uploads,
-                aspect_ratio=aspect_ratio,
-                image_size=image_size,
-                image_model=image_platform["image_model"],
-            )
-        else:
-            payload = build_payload(
+        try:
+            generation_timeout = TIMEOUT_MAP.get(image_size, 300)
+            response_payload = request_image_generation(
+                image_platform=image_platform,
                 prompt=prompt,
                 base_image=base_upload,
                 reference_images=ref_uploads,
                 aspect_ratio=aspect_ratio,
                 image_size=image_size,
                 enable_search=enable_search,
-            )
-
-        try:
-            body = json.dumps(payload).encode("utf-8")
-            generation_timeout = TIMEOUT_MAP.get(image_size, 300)
-            response_payload = post_json_to_upstream(
-                api_url=image_platform["api_url"],
-                body=body,
-                api_key=image_platform["api_key"],
                 timeout=generation_timeout,
-            )
-            response_payload = maybe_poll_grsai_generation_result(
-                image_platform["api_url"],
-                image_platform["api_key"],
-                response_payload,
-                generation_timeout,
             )
             image_bytes, mime_type, message = resolve_response_image(
                 response_payload,
@@ -3070,39 +3316,17 @@ class AppHandler(BaseHTTPRequestHandler):
         )
 
         tile_image_size = map_output_size("4K")
-        if is_grsai_api_generate_endpoint(image_platform["api_url"]):
-            payload = build_grsai_api_generate_payload(
-                prompt=prompt,
-                base_image=tile_upload,
-                reference_images=[],
-                aspect_ratio=tile_aspect_ratio,
-                image_size=tile_image_size,
-                image_model=image_platform["image_model"],
-            )
-        else:
-            payload = build_payload(
+        try:
+            generation_timeout = TIMEOUT_MAP.get(tile_image_size, 300)
+            response_payload = request_image_generation(
+                image_platform=image_platform,
                 prompt=prompt,
                 base_image=tile_upload,
                 reference_images=[],
                 aspect_ratio=tile_aspect_ratio,
                 image_size=tile_image_size,
                 enable_search=False,
-            )
-
-        try:
-            body = json.dumps(payload).encode("utf-8")
-            generation_timeout = TIMEOUT_MAP.get(tile_image_size, 300)
-            response_payload = post_json_to_upstream(
-                api_url=image_platform["api_url"],
-                body=body,
-                api_key=image_platform["api_key"],
                 timeout=generation_timeout,
-            )
-            response_payload = maybe_poll_grsai_generation_result(
-                image_platform["api_url"],
-                image_platform["api_key"],
-                response_payload,
-                generation_timeout,
             )
             image_bytes, mime_type, _ = resolve_response_image(
                 response_payload,

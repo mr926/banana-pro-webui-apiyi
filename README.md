@@ -90,7 +90,7 @@ docker compose up -d
   <platform id="Grsai" name="Grsai" default="true" defaultModel="nano-banana-2">
     <url>https://grsai.dakka.com.cn/v1/api/generate</url>
     <key></key>
-    <models separator="|">nano-banana-2</models>
+    <models separator="|" protocol="grsai-generate">nano-banana-2</models>
   </platform>
 </apiPlatforms>
 ```
@@ -98,6 +98,24 @@ docker compose up -d
 Grsai 使用 `/v1/api/generate` 时，请求体会按 Grsai 文档发送 `model / prompt / images / aspectRatio / imageSize / replyType`；若接口返回异步 `id`，服务端会继续查询 `/v1/api/result` 并下载 `results[].url` 到本地历史。
 
 多个平台直接复制 `<platform>` 节点。`key` 建议在本地填写，不要提交到仓库。
+
+`models` 的 `protocol` 属性是可选的，旧配置不填写时仍会根据 URL 和模型名自动识别。当前支持：
+
+- `nanobananapro`（也可写 `gemini-generate-content`）：Gemini `generateContent` JSON 协议
+- `grsai-generate`：Grsai `/v1/api/generate` 协议
+- `openai-images`：OpenAI Images API 兼容协议
+
+GPT Image 2 平台示例：
+
+```xml
+<platform id="openai-compatible" name="GPT Image 2" defaultModel="gpt-image-2">
+  <url>https://api.openai.com/v1</url>
+  <key>your-api-key</key>
+  <models separator="|" protocol="openai-images">gpt-image-2</models>
+</platform>
+```
+
+`openai-images` 在纯文生图时调用 `/images/generations`；提供基础图或参考图时调用 `/images/edits`，并按基础图、参考图上传顺序发送多个 `image[]` 文件。现有的比例和 `1K / 2K / 4K` 选项会自动转换为 GPT Image 2 支持的具体分辨率。
 
 ## 提示词与技能
 
