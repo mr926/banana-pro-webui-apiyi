@@ -153,12 +153,6 @@
               </div>
             </div>
             <div class="param-section-body" id="section-prompt-body">
-              <!-- 模式切换 -->
-              <div class="segment-grid prompt-mode-grid">
-                <label class="segment"><input type="radio" name="promptMode" value="default" checked /><span>直接输入</span></label>
-                <label class="segment"><input type="radio" name="promptMode" value="optimized" /><span>AI 翻译优化</span></label>
-              </div>
-
               <!-- 提示词库 -->
               <div class="prompt-toolbar">
                 <select id="prompt-library-select" class="prompt-select">
@@ -175,27 +169,6 @@
               ></textarea>
               <p class="param-section-hint">上传后可点击图片左下角标签，把 `##BASE##` / `##REF1##` / `##REF2##` 插入到当前光标位置。</p>
 
-              <!-- AI 优化面板（隐藏） -->
-              <div id="optimized-prompt-panel" class="optimized-prompt-panel hidden">
-                <div class="persona-toolbar">
-                  <div class="prompt-toolbar">
-                    <select id="prompt-persona-select" class="prompt-select">
-                      <option value="">选择转译技能</option>
-                    </select>
-                    <button type="button" id="manage-prompt-persona-button" class="ghost-button">管理</button>
-                  </div>
-                  <p id="prompt-persona-summary" class="persona-summary"></p>
-                </div>
-                <button type="button" id="optimize-prompt-button" class="primary-button optimize-button">提示词优化</button>
-                <div id="optimize-progress" class="inline-progress hidden"></div>
-                <textarea
-                  id="optimized-prompt"
-                  rows="4"
-                  placeholder="这里会显示 AI 翻译优化后的英文提示词，生成时会发送这里的内容。"
-                  readonly
-                ></textarea>
-                <p id="optimize-status" class="form-status inline-status"></p>
-              </div>
             </div>
           </section>
 
@@ -248,19 +221,6 @@
                 </div>
               </div>
 
-              <div class="compact-divider"></div>
-
-              <!-- 网络搜索 -->
-              <label class="toggle-row">
-                <div class="toggle-row-text">
-                  <strong>网络搜索增强</strong>
-                  <p>在需要补充公开信息时启用</p>
-                </div>
-                <span class="switch">
-                  <input type="checkbox" name="enableSearch" value="true" />
-                  <span class="slider"></span>
-                </span>
-              </label>
             </div>
           </section>
 
@@ -592,62 +552,6 @@
           <button type="button" id="save-prompt-library-button" class="primary-button modal-primary">保存</button>
         </div>
         <p id="prompt-library-modal-status" class="form-status inline-status"></p>
-      </div>
-    </div>
-
-    <!-- ── 技能管理 Modal ── -->
-    <div id="prompt-persona-modal" class="modal-overlay hidden" aria-hidden="true">
-      <div class="modal-card modal-card-wide">
-        <div class="modal-head">
-          <h2>管理提示词优化技能</h2>
-          <button type="button" id="close-prompt-persona-modal" class="ghost-button">关闭</button>
-        </div>
-        <div class="modal-two-column">
-          <section class="modal-panel">
-            <div class="modal-panel-head">
-              <h3>上传 md 文件</h3>
-            </div>
-            <div class="prompt-toolbar">
-              <label class="ghost-button prompt-import">
-                <input id="prompt-persona-file" type="file" accept=".md,text/markdown,text/plain" />
-                选择 md 文件
-              </label>
-              <button type="button" id="upload-prompt-persona-button" class="ghost-button">上传</button>
-            </div>
-            <p class="modal-intro compact">格式：第一行技能名称，第二行简介，其余为系统提示词。</p>
-            <div id="prompt-persona-list" class="persona-list"></div>
-          </section>
-          <section class="modal-panel">
-            <div class="modal-panel-head">
-              <h3>编辑当前技能</h3>
-              <div class="persona-editor-tools">
-                <button type="button" id="create-prompt-persona-button" class="ghost-button">新建</button>
-                <span id="prompt-persona-filename" class="meta-pill">未选择</span>
-              </div>
-            </div>
-            <label class="modal-field">
-              <span>文件名（.md）</span>
-              <input id="prompt-persona-filename-input" class="auth-input modal-input" type="text" placeholder="architectural-director.md" />
-            </label>
-            <label class="modal-field">
-              <span>名称</span>
-              <input id="prompt-persona-name-input" class="auth-input modal-input" type="text" placeholder="技能名称" />
-            </label>
-            <label class="modal-field">
-              <span>简介</span>
-              <input id="prompt-persona-summary-input" class="auth-input modal-input" type="text" placeholder="一句简介" />
-            </label>
-            <label class="modal-field">
-              <span>正文</span>
-              <textarea id="prompt-persona-content-input" class="modal-textarea" rows="10" placeholder="这里填写系统提示词正文"></textarea>
-            </label>
-            <div class="modal-actions split">
-              <button type="button" id="save-prompt-persona-button" class="primary-button modal-primary">保存修改</button>
-              <button type="button" id="delete-prompt-persona-button" class="danger-button">删除技能</button>
-            </div>
-            <p id="prompt-persona-modal-status" class="form-status inline-status"></p>
-          </section>
-        </div>
       </div>
     </div>
 

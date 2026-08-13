@@ -154,5 +154,47 @@ class OpenAIRequestTests(unittest.TestCase):
         self.assertEqual(mime_type, "image/png")
 
 
+class GrsaiDrawTests(unittest.TestCase):
+    def test_nano_banana_draw_payload(self):
+        payload = server.build_grsai_draw_payload(
+            server.PROTOCOL_GRSAI_NANO_BANANA,
+            "draw",
+            None,
+            [],
+            "16:9",
+            "2K",
+            "nano-banana-2",
+        )
+        self.assertEqual(payload["model"], "nano-banana-2")
+        self.assertEqual(payload["aspectRatio"], "16:9")
+        self.assertEqual(payload["imageSize"], "2K")
+        self.assertEqual(payload["webHook"], "-1")
+
+    def test_gpt_draw_payload_uses_pixel_dimensions(self):
+        payload = server.build_grsai_draw_payload(
+            server.PROTOCOL_GRSAI_GPT_IMAGE,
+            "draw",
+            None,
+            [],
+            "16:9",
+            "2K",
+            "gpt-image-2-vip",
+        )
+        self.assertEqual(payload["model"], "gpt-image-2-vip")
+        self.assertEqual(payload["aspectRatio"], "2048x1152")
+        self.assertEqual(payload["quality"], "auto")
+        self.assertNotIn("imageSize", payload)
+
+    def test_grsai_draw_endpoints(self):
+        self.assertEqual(
+            server.build_grsai_draw_url("https://grsai.dakka.com.cn", server.PROTOCOL_GRSAI_NANO_BANANA),
+            "https://grsai.dakka.com.cn/v1/draw/nano-banana",
+        )
+        self.assertEqual(
+            server.build_grsai_draw_url("https://grsai.dakka.com.cn", server.PROTOCOL_GRSAI_GPT_IMAGE),
+            "https://grsai.dakka.com.cn/v1/draw/completions",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

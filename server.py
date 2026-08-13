@@ -74,6 +74,8 @@ DEFAULT_MODEL_SEPARATOR = "|"
 PROTOCOL_GEMINI_GENERATE_CONTENT = "gemini-generate-content"
 PROTOCOL_GRSAI_GENERATE = "grsai-generate"
 PROTOCOL_OPENAI_IMAGES = "openai-images"
+PROTOCOL_GRSAI_NANO_BANANA = "grsai-nano-banana"
+PROTOCOL_GRSAI_GPT_IMAGE = "grsai-gpt-image"
 IMAGE_PROTOCOL_ALIASES = {
     "gemini": PROTOCOL_GEMINI_GENERATE_CONTENT,
     "gemini-generate-content": PROTOCOL_GEMINI_GENERATE_CONTENT,
@@ -85,6 +87,8 @@ IMAGE_PROTOCOL_ALIASES = {
     "gpt-image": PROTOCOL_OPENAI_IMAGES,
     "openai": PROTOCOL_OPENAI_IMAGES,
     "openai-images": PROTOCOL_OPENAI_IMAGES,
+    "grsai-nano-banana": PROTOCOL_GRSAI_NANO_BANANA,
+    "grsai-gpt-image": PROTOCOL_GRSAI_GPT_IMAGE,
 }
 DEFAULT_PORT = 8787
 TIMEOUT_MAP = {"1K": 180, "2K": 300, "4K": 360}
@@ -1944,7 +1948,6 @@ def build_payload(
     reference_images: List[dict],
     aspect_ratio: str,
     image_size: str,
-    enable_search: bool,
 ) -> dict:
     parts = [
         {"text": build_prompt(prompt, len(reference_images), has_base_image=bool(base_image))},
@@ -1989,9 +1992,6 @@ def build_payload(
         },
     }
 
-    if enable_search:
-        payload["tools"] = [{"googleSearch": {}}]
-
     return payload
 
 
@@ -2017,6 +2017,38 @@ def build_grsai_api_generate_payload(
         "imageSize": image_size,
         "replyType": "json",
     }
+
+
+def build_grsai_draw_url(api_url: str, protocol: str) -> str:
+    parsed = urlparse(str(api_url or "").strip())
+    endpoint = "/v1/draw/completions" if protocol == PROTOCOL_GRSAI_GPT_IMAGE else "/v1/draw/nano-banana"
+    return urlunparse(parsed._replace(path=endpoint, params="", query="", fragment=""))
+
+
+def build_grsai_draw_payload(
+    protocol: str,
+    prompt: str,
+    base_image: Optional[dict],
+    reference_images: List[dict],
+    aspect_ratio: str,
+    image_size: str,
+    image_model: str,
+) -> dict:
+    images = ([base_image] if base_image else []) + reference_images
+    payload = {
+        "model": image_model,
+        "prompt": build_prompt(prompt, len(reference_images), has_base_image=bool(base_image)),
+        "urls": [build_image_data_url(image) for image in images],
+        "webHook": "-1",
+        "shutProgress": True,
+    }
+    if protocol == PROTOCOL_GRSAI_GPT_IMAGE:
+        payload["aspectRatio"] = map_openai_image_size(aspect_ratio, image_size)
+        payload["quality"] = "auto"
+    else:
+        payload["aspectRatio"] = aspect_ratio
+        payload["imageSize"] = image_size
+    return payload
 
 
 def map_openai_image_size(aspect_ratio: str, image_size: str) -> str:
@@ -2303,6 +2335,36 @@ def maybe_poll_grsai_generation_result(api_url: str, api_key: str, payload: dict
     return latest_payload
 
 
+def unwrap_grsai_draw_payload(payload: dict) -> dict:
+    data = payload.get("data")
+    return data if isinstance(data, dict) else payload
+
+
+def poll_grsai_draw_result(api_url: str, api_key: str, payload: dict, timeout: int) -> dict:
+    latest = unwrap_grsai_draw_payload(payload)
+    if extract_response_image_url(latest):
+        return latest
+    result_id = str(latest.get("id") or "").strip()
+    if not result_id:
+        return latest
+    result_url = urlunparse(urlparse(api_url)._replace(path="/v1/draw/result", params="", query="", fragment=""))
+    deadline = time.monotonic() + max(timeout, 5)
+    while time.monotonic() < deadline:
+        status = str(latest.get("status") or "").lower()
+        if status in FAILED_GENERATION_STATUSES or extract_response_image_url(latest):
+            return latest
+        time.sleep(2)
+        remaining = max(1, min(30, int(deadline - time.monotonic())))
+        response = post_json_to_upstream(
+            result_url,
+            json.dumps({"id": result_id}).encode("utf-8"),
+            api_key,
+            remaining,
+        )
+        latest = unwrap_grsai_draw_payload(response)
+    return latest
+
+
 def request_image_generation(
     image_platform: dict,
     prompt: str,
@@ -2310,10 +2372,19 @@ def request_image_generation(
     reference_images: List[dict],
     aspect_ratio: str,
     image_size: str,
-    enable_search: bool,
     timeout: int,
 ) -> dict:
     protocol = image_platform.get("protocol") or PROTOCOL_GEMINI_GENERATE_CONTENT
+
+    if protocol in {PROTOCOL_GRSAI_NANO_BANANA, PROTOCOL_GRSAI_GPT_IMAGE}:
+        api_url = build_grsai_draw_url(image_platform["api_url"], protocol)
+        payload = build_grsai_draw_payload(
+            protocol, prompt, base_image, reference_images, aspect_ratio, image_size, image_platform["image_model"]
+        )
+        response = post_json_to_upstream(
+            api_url, json.dumps(payload).encode("utf-8"), image_platform["api_key"], timeout
+        )
+        return poll_grsai_draw_result(api_url, image_platform["api_key"], response, timeout)
 
     if protocol == PROTOCOL_OPENAI_IMAGES:
         return post_openai_images_request(
@@ -2342,7 +2413,6 @@ def request_image_generation(
             reference_images=reference_images,
             aspect_ratio=aspect_ratio,
             image_size=image_size,
-            enable_search=enable_search,
         )
     else:
         raise ImagePlatformConfigError(f"不支持的图片协议 `{protocol}`。", status_code=500)
@@ -2913,30 +2983,10 @@ class AppHandler(BaseHTTPRequestHandler):
                     },
                 )
 
-        if parsed.path == "/api/optimize-prompt":
-            if not self.ensure_authenticated():
-                return
-            try:
-                return self.handle_optimize_prompt()
-            except Exception as exc:
-                return json_response(
-                    self,
-                    500,
-                    {
-                        "error": "服务端处理提示词优化请求时发生异常。",
-                        "details": str(exc),
-                    },
-                )
-
         if parsed.path == "/api/prompt-library":
             if not self.ensure_authenticated():
                 return
             return self.handle_save_prompt_library()
-
-        if parsed.path in {"/api/prompt-personas", "/api/prompt-skills"}:
-            if not self.ensure_authenticated():
-                return
-            return self.handle_create_prompt_skill()
 
         if parsed.path == "/api/stitch-tiles":
             if not self.ensure_authenticated():
@@ -3154,10 +3204,8 @@ class AppHandler(BaseHTTPRequestHandler):
 
         prompt = form.get("prompt", "")
         source_prompt = form.get("sourcePrompt", "")
-        prompt_mode = form.get("promptMode", "default")
         aspect_ratio = form.get("aspectRatio", "auto")
         image_size = map_output_size(form.get("imageSize", "4K"))
-        enable_search = form.get("enableSearch", "false").lower() == "true"
 
         request_mode = str(form.get("mode", "img2img")).strip()
 
@@ -3193,7 +3241,6 @@ class AppHandler(BaseHTTPRequestHandler):
                 reference_images=ref_uploads,
                 aspect_ratio=aspect_ratio,
                 image_size=image_size,
-                enable_search=enable_search,
                 timeout=generation_timeout,
             )
             image_bytes, mime_type, message = resolve_response_image(
@@ -3258,10 +3305,9 @@ class AppHandler(BaseHTTPRequestHandler):
             "createdAt": now.isoformat(timespec="seconds"),
             "prompt": prompt,
             "sourcePrompt": source_prompt or prompt,
-            "promptMode": prompt_mode,
+            "promptMode": "default",
             "aspectRatio": aspect_ratio,
             "imageSize": image_size,
-            "enableSearch": enable_search,
             "baseImageName": base_upload["filename"] if base_upload else "",
             "baseImageSha256": base_upload.get("sha256", "") if base_upload else "",
             "referenceCount": len(ref_uploads),
@@ -3347,7 +3393,6 @@ class AppHandler(BaseHTTPRequestHandler):
                 reference_images=[],
                 aspect_ratio=tile_aspect_ratio,
                 image_size=tile_image_size,
-                enable_search=False,
                 timeout=generation_timeout,
             )
             image_bytes, mime_type, _ = resolve_response_image(

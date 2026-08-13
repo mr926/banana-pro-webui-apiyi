@@ -36,14 +36,6 @@ const promptLibrarySelect = document.getElementById("prompt-library-select");
 const managePromptLibraryButton = document.getElementById("manage-prompt-library-button");
 const promptTextarea = document.getElementById("prompt");
 const promptTextareaMobile = document.getElementById("prompt-m");
-const optimizePromptButton = document.getElementById("optimize-prompt-button");
-const optimizedPromptPanel = document.getElementById("optimized-prompt-panel");
-const optimizedPromptTextarea = document.getElementById("optimized-prompt");
-const optimizeProgress = document.getElementById("optimize-progress");
-const optimizeStatus = document.getElementById("optimize-status");
-const promptPersonaSelect = document.getElementById("prompt-persona-select");
-const managePromptPersonaButton = document.getElementById("manage-prompt-persona-button");
-const promptPersonaSummary = document.getElementById("prompt-persona-summary");
 const aspectRatioGroup = document.getElementById("aspect-ratio-group");
 const ratioOrientationPreview = document.getElementById("ratio-orientation-preview");
 const promptLibraryModal = document.getElementById("prompt-library-modal");
@@ -51,30 +43,14 @@ const closePromptLibraryModalButton = document.getElementById("close-prompt-libr
 const promptLibraryEditor = document.getElementById("prompt-library-editor");
 const savePromptLibraryButton = document.getElementById("save-prompt-library-button");
 const promptLibraryModalStatus = document.getElementById("prompt-library-modal-status");
-const promptPersonaModal = document.getElementById("prompt-persona-modal");
-const closePromptPersonaModalButton = document.getElementById("close-prompt-persona-modal");
-const promptPersonaFileInput = document.getElementById("prompt-persona-file");
-const uploadPromptPersonaButton = document.getElementById("upload-prompt-persona-button");
-const promptPersonaList = document.getElementById("prompt-persona-list");
-const createPromptPersonaButton = document.getElementById("create-prompt-persona-button");
-const promptPersonaFilename = document.getElementById("prompt-persona-filename");
-const promptPersonaFilenameInput = document.getElementById("prompt-persona-filename-input");
-const promptPersonaNameInput = document.getElementById("prompt-persona-name-input");
-const promptPersonaSummaryInput = document.getElementById("prompt-persona-summary-input");
-const promptPersonaContentInput = document.getElementById("prompt-persona-content-input");
-const savePromptPersonaButton = document.getElementById("save-prompt-persona-button");
-const deletePromptPersonaButton = document.getElementById("delete-prompt-persona-button");
-const promptPersonaModalStatus = document.getElementById("prompt-persona-modal-status");
 
 const state = {
   currentResult: null,
   progressTimer: null,
-  optimizeProgressTimer: null,
   ossSyncTimer: null,
   ossSyncRequest: null,
   ossSyncTrackedId: "",
   progressValue: 0,
-  optimizeProgressValue: 0,
   notificationPermissionPromise: null,
   historyHydrated: false,
   historyPage: 1,
@@ -91,13 +67,6 @@ const state = {
   selectedImageModel: "",
   promptLibrary: [],
   promptLibraryContent: "",
-  promptPersonas: [],
-  selectedPromptPersonaId: "",
-  editingPromptPersonaId: "",
-  editingPromptPersonaFilename: "",
-  creatingPromptPersona: false,
-  optimizedPrompt: "",
-  optimizingPrompt: false,
   titleFlashTimer: null,
   promptCursorTarget: "",
   promptCursorStart: 0,
@@ -1287,12 +1256,6 @@ async function syncCurrentResultFromHistory() {
   }
 }
 
-function setOptimizeStatus(message, isError = false) {
-  if (!optimizeStatus) return;
-  optimizeStatus.textContent = message || "";
-  optimizeStatus.style.color = isError ? "#d14343" : "";
-}
-
 function setAuthStatus(message, isError = false) {
   authStatus.textContent = message || "";
   authStatus.style.color = isError ? "#d14343" : "";
@@ -1332,12 +1295,6 @@ function setPromptLibraryModalStatus(message, isError = false) {
   if (!promptLibraryModalStatus) return;
   promptLibraryModalStatus.textContent = message || "";
   promptLibraryModalStatus.style.color = isError ? "#d14343" : "";
-}
-
-function setPromptPersonaModalStatus(message, isError = false) {
-  if (!promptPersonaModalStatus) return;
-  promptPersonaModalStatus.textContent = message || "";
-  promptPersonaModalStatus.style.color = isError ? "#d14343" : "";
 }
 
 function getPromptTargetKey(textarea) {
@@ -1846,15 +1803,6 @@ async function loadApiPlatforms() {
   applyApiPlatformSelection(payload.defaultPlatformId, payload.defaultImageModel || "");
 }
 
-function getPromptMode() {
-  return form.querySelector('input[name="promptMode"]:checked')?.value || "default";
-}
-
-function hasOptimizedPrompt() {
-  const value = optimizedPromptTextarea?.value || state.optimizedPrompt || "";
-  return Boolean(value.trim());
-}
-
 function hasSourcePrompt() {
   return Boolean((promptTextarea?.value || "").trim());
 }
@@ -1872,33 +1820,12 @@ function syncSubmitButtonState() {
     return;
   }
 
-  const promptMode = getPromptMode();
   const canSubmit =
     hasImageTarget &&
     (state.currentMode === "txt2img" || state.baseImageFile) &&
-    (promptMode === "optimized" ? hasOptimizedPrompt() : hasSourcePrompt());
+    hasSourcePrompt();
   setSubmitButtonLabel("开始生成");
   setSubmitButtonsDisabled(!canSubmit);
-}
-
-function resetOptimizedPrompt() {
-  state.optimizedPrompt = "";
-  if (optimizedPromptTextarea) {
-    optimizedPromptTextarea.value = "";
-  }
-  setOptimizeStatus("");
-  syncSubmitButtonState();
-}
-
-function syncPromptModeUI() {
-  const isOptimized = getPromptMode() === "optimized";
-  optimizedPromptPanel?.classList.toggle("hidden", !isOptimized);
-  if (!isOptimized) {
-    clearOptimizeProgress(true);
-    setOptimizeStatus("");
-  }
-  syncSubmitButtonState();
-  renderPromptPersonaOptions();
 }
 
 function getAspectOrientation(value) {
@@ -2098,8 +2025,7 @@ function renderMetaInto(container, entry) {
     entry.imageModel ? `模型 ${entry.imageModel}` : "",
     `比例 ${entry.aspectRatio}`,
     `大小 ${entry.imageSize}`,
-    entry.promptMode === "optimized" ? "AI 翻译优化" : "默认提示词",
-    entry.enableSearch ? "已开启搜索" : "未开启搜索",
+    "直接提示词",
     `${entry.referenceCount || 0} 张参考图`,
   ].filter(Boolean);
 
@@ -2553,7 +2479,7 @@ async function loadHistory(page = state.historyPage) {
 }
 
 async function hydrateAuthenticatedWorkspace() {
-  const loaders = [loadApiPlatforms, loadPromptLibrary, loadPromptPersonas, loadHistory];
+  const loaders = [loadApiPlatforms, loadPromptLibrary, loadHistory];
   let firstErrorMessage = "";
 
   for (const loader of loaders) {
@@ -2808,9 +2734,6 @@ promptTextarea?.addEventListener("input", () => {
   if (promptTextareaMobile && promptTextareaMobile.value !== promptTextarea.value) {
     promptTextareaMobile.value = promptTextarea.value;
   }
-  if (getPromptMode() === "optimized") {
-    resetOptimizedPrompt();
-  }
   syncSubmitButtonState();
 });
 
@@ -2818,9 +2741,6 @@ promptTextareaMobile?.addEventListener("input", () => {
   rememberPromptCursor(promptTextareaMobile);
   if (promptTextarea && promptTextarea.value !== promptTextareaMobile.value) {
     promptTextarea.value = promptTextareaMobile.value;
-  }
-  if (getPromptMode() === "optimized") {
-    resetOptimizedPrompt();
   }
   syncSubmitButtonState();
 });
@@ -2844,30 +2764,11 @@ imageModelSelect?.addEventListener("change", () => {
   syncHeaderChips();
 });
 
-promptPersonaSelect?.addEventListener("change", () => {
-  state.selectedPromptPersonaId = promptPersonaSelect.value;
-  const activePersona = state.promptPersonas.find((persona) => persona.id === state.selectedPromptPersonaId);
-  if (promptPersonaSummary) {
-    promptPersonaSummary.textContent = activePersona?.summary || "";
-  }
-  resetOptimizedPrompt();
-});
-
-form.querySelectorAll('input[name="promptMode"]').forEach((node) => {
-  node.addEventListener("change", () => {
-    syncPromptModeUI();
-  });
-});
-
 aspectRatioGroup?.querySelectorAll('input[name="aspectRatio"]').forEach((node) => {
   node.addEventListener("change", () => {
     syncAspectRatioPreview();
     syncHeaderChips();
   });
-});
-
-optimizePromptButton?.addEventListener("click", async () => {
-  await optimizePrompt();
 });
 
 // ── 重试计数器辅助函数 ─────────────────────────────────────────
@@ -2918,13 +2819,12 @@ async function doGenerateOnce(formData) {
 }
 
 // ── 构建 FormData（方便重试时复用） ───────────────────────────
-function buildGenerateFormData(finalPrompt, promptMode) {
+function buildGenerateFormData(finalPrompt) {
   const formData = new FormData();
   formData.set("apiPlatformId", state.selectedApiPlatformId);
   formData.set("imageModel", state.selectedImageModel);
   formData.set("prompt", finalPrompt);
   formData.set("sourcePrompt", promptTextarea.value || "");
-  formData.set("promptMode", promptMode);
   formData.set("aspectRatio", form.querySelector('input[name="aspectRatio"]:checked').value);
   formData.set("imageSize", form.querySelector('input[name="imageSize"]:checked').value);
   if (state.currentMode !== "txt2img") {
@@ -2934,8 +2834,6 @@ function buildGenerateFormData(finalPrompt, promptMode) {
   state.referenceFiles.forEach((file) => {
     formData.append("referenceImages", file);
   });
-  const searchEnabled = form.querySelector('input[name="enableSearch"]').checked;
-  formData.set("enableSearch", String(searchEnabled));
   return formData;
 }
 
@@ -2958,16 +2856,8 @@ form.addEventListener("submit", async (event) => {
     return;
   }
 
-  const promptMode = getPromptMode();
-  let finalPrompt = (promptTextarea.value || "").trim();
-  if (promptMode === "optimized") {
-    finalPrompt = (optimizedPromptTextarea?.value || state.optimizedPrompt || "").trim();
-    if (!finalPrompt) {
-      setStatus("当前处于 AI 翻译优化模式，请先点击【提示词优化】。", true);
-      syncSubmitButtonState();
-      return;
-    }
-  } else if (!finalPrompt) {
+  const finalPrompt = (promptTextarea.value || "").trim();
+  if (!finalPrompt) {
     setStatus("请先输入提示词。", true);
     syncSubmitButtonState();
     return;
@@ -2990,7 +2880,7 @@ form.addEventListener("submit", async (event) => {
 
   while (true) {
     try {
-      const formData = buildGenerateFormData(finalPrompt, promptMode);
+      const formData = buildGenerateFormData(finalPrompt);
       const payload = await doGenerateOnce(formData);
       const pendingOssUpload = isOssUploadPending(payload);
 
@@ -3081,61 +2971,6 @@ savePromptLibraryButton?.addEventListener("click", async () => {
   }
 });
 
-managePromptPersonaButton?.addEventListener("click", openPromptPersonaModal);
-closePromptPersonaModalButton?.addEventListener("click", closePromptPersonaModal);
-promptPersonaModal?.addEventListener("click", handleModalBackdropClick);
-
-uploadPromptPersonaButton?.addEventListener("click", async () => {
-  try {
-    await uploadPromptPersonaFile();
-    setPromptPersonaModalStatus("技能上传成功。");
-    setOptimizeStatus("");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "上传技能失败";
-    setPromptPersonaModalStatus(message, true);
-  }
-});
-
-createPromptPersonaButton?.addEventListener("click", () => {
-  prepareNewPromptPersona();
-  setPromptPersonaModalStatus("已切换到新建模式，填写后点击【创建技能】。");
-});
-
-promptPersonaFilenameInput?.addEventListener("blur", () => {
-  if (!promptPersonaFilenameInput.value.trim()) return;
-  promptPersonaFilenameInput.value = normalizePersonaFilename(promptPersonaFilenameInput.value);
-});
-
-savePromptPersonaButton?.addEventListener("click", async () => {
-  try {
-    const result = await savePromptPersonaFromEditor();
-    setPromptPersonaModalStatus(result.mode === "create" ? "技能新建成功。" : "技能已保存。");
-    setOptimizeStatus("");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "保存技能失败";
-    setPromptPersonaModalStatus(message, true);
-  }
-});
-
-deletePromptPersonaButton?.addEventListener("click", async () => {
-  if (!state.editingPromptPersonaId) {
-    return;
-  }
-  const confirmed = window.confirm("确定删除当前技能吗？对应的 md 文件也会被删除。");
-  if (!confirmed) {
-    return;
-  }
-
-  try {
-    await deleteEditingPromptPersona();
-    setPromptPersonaModalStatus("技能已删除。");
-    setOptimizeStatus("");
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "删除技能失败";
-    setPromptPersonaModalStatus(message, true);
-  }
-});
-
 loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const password = passwordInput.value.trim();
@@ -3171,14 +3006,9 @@ logoutButton.addEventListener("click", async () => {
     state.historyHydrated = false;
     state.promptLibrary = [];
     state.promptLibraryContent = "";
-    state.promptPersonas = [];
-    state.selectedPromptPersonaId = "";
     resetApiPlatforms("登录后加载 API 平台配置。");
     closePromptLibraryModal();
-    closePromptPersonaModal();
-    resetPromptPersonaEditor();
     renderPromptLibraryOptions();
-    renderPromptPersonaOptions();
     historyList.innerHTML = `<div class="empty-history">登录后可查看历史记录。</div>`;
     resetHistoryPagination();
     renderCurrentResult(null);
@@ -3190,8 +3020,6 @@ async function bootstrap() {
   try {
     resetApiPlatforms("正在读取 API 平台配置。");
     renderPromptLibraryOptions();
-    renderPromptPersonaOptions();
-    syncPromptModeUI();
     syncAspectRatioPreview();
     const response = await fetch("/api/auth/status");
     const payload = await readJsonSafely(response);

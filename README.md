@@ -1,6 +1,6 @@
 # Banana Pro 图生图 Web UI
 
-基于 Gemini 图生图 API 的本地 Web UI，支持多平台、多参考图、AI 提示词优化和 OSS 存储。
+基于 GRSAI 图片生成 API 的本地 Web UI，支持 Nano Banana、GPT Image、多参考图和 OSS 存储。
 
 ## 功能
 
@@ -8,9 +8,7 @@
 - 基础图超过 `4MB` 自动压缩；参考图超过 `2MB` 自动压缩
 - 生成尺寸支持 `1K / 2K / 4K`，比例自动继承基础图或手动选择
 - 多图显式编号 `##BASE## / ##REF1##...`，可在提示词中按编号引用
-- AI 翻译优化：把基础图和提示词一起发给 LLM 优化后再生图
 - 提示词库下拉选择 + 弹窗管理（`data/prompt-library.md`）
-- 提示词优化技能管理（`data/skills/*.md`）
 - 历史相册，支持批量下载（优先 OSS，缺失时回退本地）
 - 支持 PWA 安装到桌面 / 主屏幕
 - 上传 / 下载 / 通知根据桌面 / iPhone / Android 自动适配
@@ -37,14 +35,6 @@ services:
       BANANA_PRO_HOST: "0.0.0.0"
       # 需与上方 ports 右侧端口一致
       BANANA_PRO_PORT: "8787"
-
-      # ── AI 提示词优化（LLM）─────────────────────────────────────────────
-      # 用于"AI 翻译优化"功能的 API Key（优先级高于图片平台 key）
-      BANANA_PRO_LLM_API_KEY: "sk-xxxxxxxxxxxxxxxxxxxxxxxx"
-      # 兼容 OpenAI 格式的 LLM 接口地址
-      BANANA_PRO_LLM_API_URL: "https://api.apiyi.com/v1/chat/completions"
-      # LLM 模型名
-      BANANA_PRO_LLM_MODEL: "gpt-5.4"
 
       # ── 图片生成平台（回退配置）─────────────────────────────────────────
       # 优先读取 data/api-platforms.xml；以下仅在 XML 缺失或 key 为空时生效
@@ -130,18 +120,9 @@ GPT Image 2 平台示例：
 
 `openai-images` 在纯文生图时调用 `/images/generations`；提供基础图或参考图时调用 `/images/edits`，并按基础图、参考图上传顺序发送多个 `image[]` 文件。现有的比例和 `1K / 2K / 4K` 选项会自动转换为 GPT Image 2 支持的具体分辨率。
 
-## 提示词与技能
+## 提示词
 
 - **提示词库**：`data/prompt-library.md`，一行一条，在页面"管理提示词"弹窗中编辑
-- **优化技能**：`data/skills/*.md`，在"AI 翻译优化"→"管理"弹窗中上传 / 编辑 / 删除
-
-技能文件格式：
-
-```
-第一行：技能名称
-第二行：一句简介
-第三行起：技能正文 / system prompt
-```
 
 ## 本地启动
 

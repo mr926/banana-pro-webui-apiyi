@@ -1,14 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <apiPlatforms version="1">
-  <platform id="Grsai" name="Grsai" default="true"  defaultModel="nano-banana-2">
-    <url>https://grsai.dakka.com.cn/v1/api/generate</url>
+  <platform id="grsai" name="GRSAI" default="true" defaultModel="nano-banana-2">
+    <url>https://grsai.dakka.com.cn</url>
     <key>sk-d3646943df7a4c449210f926649a2308</key>
-    <models separator="|" protocol="grsai-generate">nano-banana-pro|nano-banana-pro-vt|nano-banana-pro-cl|nano-banana-pro-vip|nano-banana-pro-4k-vip|nano-banana-2</models>
-  </platform>
-  <platform id="apiyi" name="APIYI">
-    <url>https://api.apiyi.com/v1beta/models/{model}:generateContent</url>
-    <key>sk-nOfIuTi3Q0IntgMf26117cD1859e44A7825f20D7F0A1D16d</key>
-    <models separator="|" protocol="nanobananapro">gemini-3-pro-image-preview|gemini-3.1-flash-image-preview-4k</models>
+    <models separator="|" protocol="grsai-nano-banana">nano-banana-pro|nano-banana-pro-vt|nano-banana-pro-cl|nano-banana-pro-vip|nano-banana-pro-4k-vip|nano-banana-2</models>
+    <models separator="|" protocol="grsai-gpt-image">gpt-image-2|gpt-image-2-vip</models>
   </platform>
   <!--
   复制一个 <platform> 节点即可新增平台。
